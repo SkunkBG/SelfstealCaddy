@@ -38,13 +38,13 @@ DPI or active probing sees a legitimate TLS certificate matching the SNI — not
 **One command:**
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/selfsteal-setup.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/SkunkBG/SelfstealCaddy/main/selfsteal-setup.sh)
 ```
 
 **Or manually:**
 
 ```bash
-curl -Lo selfsteal-setup.sh https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/selfsteal-setup.sh
+curl -Lo selfsteal-setup.sh https://raw.githubusercontent.com/SkunkBG/SelfstealCaddy/main/selfsteal-setup.sh
 bash selfsteal-setup.sh
 ```
 
