@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ============================================
-#  SelfSteal Caddy 404 Stub Installer
+#  SelfSteal Caddy Stub Installer
 #  For Remnawave + Xray Reality nodes
 #
 #  Usage: bash selfsteal-setup.sh
@@ -15,13 +15,14 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
 echo -e "${CYAN}"
 cat << 'BANNER'
  ╔═══════════════════════════════════════════════╗
- ║      SelfSteal Caddy 404 Stub Installer       ║
- ║      For Remnawave + Xray Reality nodes        ║
+ ║       SelfSteal Caddy Stub Installer          ║
+ ║       For Remnawave + Xray Reality nodes       ║
  ╚═══════════════════════════════════════════════╝
 BANNER
 echo -e "${NC}"
@@ -42,6 +43,26 @@ if [[ -z "$DOMAIN" ]]; then
 fi
 
 DOMAIN=$(echo "$DOMAIN" | xargs)
+
+# ---- Stub page selection ----
+echo ""
+echo -e "${BOLD}  Choose a stub page:${NC}"
+echo ""
+echo -e "  ${CYAN}1)${NC} ${BOLD}Minimal 404${NC}        ${DIM}— Dark, clean 404 error page${NC}"
+echo -e "  ${CYAN}2)${NC} ${BOLD}Cat Memes 404${NC}      ${DIM}— Fun 404 with floating cats${NC}"
+echo -e "  ${CYAN}3)${NC} ${BOLD}Business Site${NC}       ${DIM}— Professional tech company landing page${NC}"
+echo ""
+read -rp "$(echo -e "${YELLOW}[?] Select (1/2/3) [default: 1]: ${NC}")" STUB_CHOICE
+
+STUB_CHOICE=${STUB_CHOICE:-1}
+
+if [[ ! "$STUB_CHOICE" =~ ^[1-3]$ ]]; then
+    echo -e "${YELLOW}[!] Invalid choice, using default (1)${NC}"
+    STUB_CHOICE=1
+fi
+
+STUB_NAMES=("Minimal 404" "Cat Memes 404" "Business Site")
+echo -e "${GREEN}[✓] Selected: ${STUB_NAMES[$((STUB_CHOICE-1))]}${NC}"
 
 # ---- Check DNS ----
 echo -e "${CYAN}[*] Checking DNS for ${DOMAIN}...${NC}"
@@ -97,12 +118,14 @@ else
     fi
 fi
 
-# ---- Create 404 page ----
-echo -e "${CYAN}[*] Creating 404 stub page...${NC}"
+# ---- Create stub page ----
+echo -e "${CYAN}[*] Creating stub page...${NC}"
 
 mkdir -p /var/www/html
 
-cat > /var/www/html/404.html << 'HTMLEOF'
+# --- Stub 1: Minimal 404 ---
+create_stub_minimal() {
+cat > /var/www/html/index.html << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -128,14 +151,192 @@ cat > /var/www/html/404.html << 'HTMLEOF'
 </body>
 </html>
 HTMLEOF
+}
 
-echo -e "${GREEN}[✓] 404 page created${NC}"
+# --- Stub 2: Cat Memes 404 ---
+create_stub_cats() {
+cat > /var/www/html/index.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>404 - Oops!</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap');
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Fredoka',sans-serif;background:#1a1525;color:#e0e0e0;display:flex;justify-content:center;align-items:center;min-height:100vh;overflow:hidden}
+        .container{text-align:center;padding:2rem;position:relative;z-index:1}
+        .cat-wrapper{position:relative;display:inline-block;margin-bottom:1.5rem}
+        .cat{font-size:8rem;line-height:1;filter:drop-shadow(0 0 30px rgba(255,150,200,0.3));animation:float 3s ease-in-out infinite}
+        .sparkles{position:absolute;top:-10px;right:-20px;font-size:2rem;animation:spin 4s linear infinite}
+        .error-code{font-size:clamp(4rem,15vw,8rem);font-weight:700;background:linear-gradient(135deg,#ff6b9d,#c44dff,#6e8efb);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1;margin-bottom:.5rem}
+        .message{font-size:1.4rem;color:#c4a0ff;margin-bottom:.5rem;font-weight:600}
+        .sub{font-size:1rem;color:#7a6b8a;max-width:400px;margin:0 auto}
+        .paws{margin-top:1.5rem;font-size:1.5rem;opacity:.5;letter-spacing:8px;animation:walk 2s ease-in-out infinite}
+        .bg-cats{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;overflow:hidden}
+        .bg-cat{position:absolute;font-size:2rem;opacity:.06;animation:drift 20s linear infinite}
+        .bg-cat:nth-child(1){left:10%;top:-5%;animation-delay:0s;animation-duration:18s}
+        .bg-cat:nth-child(2){left:30%;top:-5%;animation-delay:3s;animation-duration:22s}
+        .bg-cat:nth-child(3){left:50%;top:-5%;animation-delay:6s;animation-duration:20s}
+        .bg-cat:nth-child(4){left:70%;top:-5%;animation-delay:2s;animation-duration:24s}
+        .bg-cat:nth-child(5){left:90%;top:-5%;animation-delay:8s;animation-duration:19s}
+        .bg-cat:nth-child(6){left:20%;top:-5%;animation-delay:11s;animation-duration:21s}
+        .bg-cat:nth-child(7){left:60%;top:-5%;animation-delay:5s;animation-duration:23s}
+        .bg-cat:nth-child(8){left:80%;top:-5%;animation-delay:9s;animation-duration:17s}
+        @keyframes float{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-15px) rotate(3deg)}}
+        @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+        @keyframes walk{0%,100%{transform:translateX(0)}50%{transform:translateX(10px)}}
+        @keyframes drift{0%{transform:translateY(-50px) rotate(0deg)}100%{transform:translateY(110vh) rotate(360deg)}}
+    </style>
+</head>
+<body>
+    <div class="bg-cats">
+        <div class="bg-cat">🐱</div><div class="bg-cat">😸</div><div class="bg-cat">🐈</div>
+        <div class="bg-cat">😺</div><div class="bg-cat">🐱</div><div class="bg-cat">😻</div>
+        <div class="bg-cat">🐈</div><div class="bg-cat">😸</div>
+    </div>
+    <div class="container">
+        <div class="cat-wrapper">
+            <div class="cat">😿</div>
+            <div class="sparkles">✨</div>
+        </div>
+        <div class="error-code">404</div>
+        <p class="message">The cat knocked this page off the table</p>
+        <p class="sub">We looked everywhere — under the couch, behind the curtains, even in the box. This page simply doesn't exist.</p>
+        <div class="paws">🐾 🐾 🐾</div>
+    </div>
+</body>
+</html>
+HTMLEOF
+}
+
+# --- Stub 3: Business Site ---
+create_stub_business() {
+cat > /var/www/html/index.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NovaTech Solutions — Digital Innovation</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Playfair+Display:wght@700&display=swap');
+        *{margin:0;padding:0;box-sizing:border-box}
+        :root{--bg:#0c0f16;--surface:#13161f;--border:#1e2230;--accent:#4f7df5;--accent2:#7c5bf5;--text:#c8cdd8;--text-dim:#5a6072;--white:#eef0f6}
+        body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);overflow-x:hidden}
+        .noise{position:fixed;top:0;left:0;width:100%;height:100%;opacity:.03;pointer-events:none;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");z-index:999}
+        nav{position:fixed;top:0;width:100%;padding:1.2rem 3rem;display:flex;justify-content:space-between;align-items:center;z-index:10;backdrop-filter:blur(20px);background:rgba(12,15,22,.7);border-bottom:1px solid var(--border)}
+        .logo{font-family:'Playfair Display',serif;font-size:1.4rem;color:var(--white);font-weight:700;letter-spacing:-.5px}
+        .logo span{color:var(--accent)}
+        nav ul{list-style:none;display:flex;gap:2rem}
+        nav a{color:var(--text-dim);text-decoration:none;font-size:.9rem;font-weight:500;transition:color .3s}
+        nav a:hover{color:var(--white)}
+        .hero{min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;padding:6rem 3rem 4rem}
+        .hero-content{max-width:800px;text-align:center;position:relative;z-index:2}
+        .badge{display:inline-block;padding:.4rem 1rem;border:1px solid var(--border);border-radius:50px;font-size:.8rem;color:var(--accent);margin-bottom:2rem;letter-spacing:1px;text-transform:uppercase}
+        h1{font-family:'Playfair Display',serif;font-size:clamp(2.5rem,6vw,4.5rem);color:var(--white);line-height:1.1;margin-bottom:1.5rem;letter-spacing:-.5px}
+        h1 em{font-style:normal;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+        .hero p{font-size:1.15rem;color:var(--text-dim);max-width:550px;margin:0 auto 2.5rem;line-height:1.7}
+        .cta-row{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap}
+        .btn{padding:.85rem 2rem;border-radius:8px;font-size:.95rem;font-weight:600;text-decoration:none;transition:all .3s;cursor:pointer;border:none;font-family:inherit}
+        .btn-primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;box-shadow:0 4px 20px rgba(79,125,245,.25)}
+        .btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(79,125,245,.35)}
+        .btn-outline{background:transparent;color:var(--text);border:1px solid var(--border)}
+        .btn-outline:hover{border-color:var(--accent);color:var(--white)}
+        .glow{position:absolute;width:500px;height:500px;border-radius:50%;filter:blur(120px);opacity:.12;pointer-events:none}
+        .glow-1{background:var(--accent);top:-100px;left:-100px}
+        .glow-2{background:var(--accent2);bottom:-100px;right:-100px}
+        .stats{display:flex;gap:3rem;justify-content:center;margin-top:4rem;padding-top:3rem;border-top:1px solid var(--border)}
+        .stat{text-align:center}
+        .stat-num{font-family:'Playfair Display',serif;font-size:2.2rem;color:var(--white);font-weight:700}
+        .stat-label{font-size:.85rem;color:var(--text-dim);margin-top:.3rem}
+        .features{padding:4rem 3rem 5rem;max-width:1000px;margin:0 auto}
+        .features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem}
+        .feature-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:2rem;transition:all .3s}
+        .feature-card:hover{border-color:var(--accent);transform:translateY(-3px)}
+        .feature-icon{width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,rgba(79,125,245,.15),rgba(124,91,245,.15));display:flex;align-items:center;justify-content:center;font-size:1.2rem;margin-bottom:1rem}
+        .feature-card h3{color:var(--white);font-size:1.05rem;margin-bottom:.5rem}
+        .feature-card p{font-size:.9rem;color:var(--text-dim);line-height:1.6}
+        footer{text-align:center;padding:2rem;border-top:1px solid var(--border);font-size:.8rem;color:var(--text-dim)}
+        @media(max-width:600px){nav{padding:1rem 1.5rem}nav ul{display:none}.hero{padding:6rem 1.5rem 3rem}.stats{flex-direction:column;gap:1.5rem}.features{padding:2rem 1.5rem}}
+    </style>
+</head>
+<body>
+    <div class="noise"></div>
+    <nav>
+        <div class="logo">Nova<span>Tech</span></div>
+        <ul>
+            <li><a href="#">Solutions</a></li>
+            <li><a href="#">About</a></li>
+            <li><a href="#">Careers</a></li>
+            <li><a href="#">Contact</a></li>
+        </ul>
+    </nav>
+    <section class="hero">
+        <div class="glow glow-1"></div>
+        <div class="glow glow-2"></div>
+        <div class="hero-content">
+            <div class="badge">Digital Transformation Partner</div>
+            <h1>Building the <em>future</em> of digital infrastructure</h1>
+            <p>We help businesses scale their technology stack with modern cloud-native solutions, enterprise security, and seamless integration.</p>
+            <div class="cta-row">
+                <a class="btn btn-primary" href="#">Get Started</a>
+                <a class="btn btn-outline" href="#">Learn More</a>
+            </div>
+            <div class="stats">
+                <div class="stat"><div class="stat-num">500+</div><div class="stat-label">Clients Worldwide</div></div>
+                <div class="stat"><div class="stat-num">99.9%</div><div class="stat-label">Uptime SLA</div></div>
+                <div class="stat"><div class="stat-num">24/7</div><div class="stat-label">Expert Support</div></div>
+            </div>
+        </div>
+    </section>
+    <section class="features">
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">☁️</div>
+                <h3>Cloud Solutions</h3>
+                <p>Multi-cloud architecture designed for resilience, performance, and cost optimization at any scale.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔒</div>
+                <h3>Enterprise Security</h3>
+                <p>Zero-trust security framework with real-time threat detection and automated incident response.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <h3>Edge Computing</h3>
+                <p>Low-latency processing at the edge with intelligent data routing and distributed computing.</p>
+            </div>
+        </div>
+    </section>
+    <footer>&copy; 2026 NovaTech Solutions. All rights reserved.</footer>
+</body>
+</html>
+HTMLEOF
+}
+
+# ---- Generate selected stub ----
+case "$STUB_CHOICE" in
+    1) create_stub_minimal ;;
+    2) create_stub_cats ;;
+    3) create_stub_business ;;
+esac
+
+echo -e "${GREEN}[✓] Stub page created${NC}"
 
 # ---- Configure Caddy ----
 echo -e "${CYAN}[*] Configuring Caddy...${NC}"
 
 if [[ -f /etc/caddy/Caddyfile ]]; then
     cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak.$(date +%s)"
+fi
+
+# Determine response code based on stub type
+if [[ "$STUB_CHOICE" == "3" ]]; then
+    RESPONSE_CODE="200"
+else
+    RESPONSE_CODE="404"
 fi
 
 cat > /etc/caddy/Caddyfile << CADDYEOF
@@ -154,16 +355,9 @@ ${DOMAIN}:8443 {
         X-Content-Type-Options "nosniff"
         X-Frame-Options "SAMEORIGIN"
     }
-    handle {
-        root * /var/www/html
-        rewrite * /404.html
-        file_server
-    }
-    handle_errors {
-        root * /var/www/html
-        rewrite * /404.html
-        file_server
-    }
+    root * /var/www/html
+    try_files {path} /index.html
+    file_server
 }
 CADDYEOF
 
@@ -202,12 +396,12 @@ fi
 # ---- Verify ----
 HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "https://${DOMAIN}:8443" 2>/dev/null || echo "000")
 
-if [[ "$HTTP_CODE" == "404" ]]; then
-    echo -e "${GREEN}[✓] HTTPS works, 404 stub served correctly${NC}"
+if [[ "$HTTP_CODE" =~ ^(200|404)$ ]]; then
+    echo -e "${GREEN}[✓] HTTPS works, stub page served (HTTP ${HTTP_CODE})${NC}"
 elif [[ "$HTTP_CODE" == "000" ]]; then
     echo -e "${YELLOW}[!] Could not verify HTTPS yet (cert may still be issuing)${NC}"
 else
-    echo -e "${YELLOW}[!] Got HTTP ${HTTP_CODE} instead of 404${NC}"
+    echo -e "${YELLOW}[!] Got HTTP ${HTTP_CODE}${NC}"
 fi
 
 # ---- Summary ----
@@ -217,7 +411,8 @@ echo -e "${GREEN}║           ✓ Installation Complete              ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  ${BOLD}Domain:${NC}     ${CYAN}${DOMAIN}${NC}"
-echo -e "  ${BOLD}Stub URL:${NC}   ${CYAN}https://${DOMAIN}:8443${NC}"
+echo -e "  ${BOLD}Stub:${NC}       ${CYAN}${STUB_NAMES[$((STUB_CHOICE-1))]}${NC}"
+echo -e "  ${BOLD}URL:${NC}        ${CYAN}https://${DOMAIN}:8443${NC}"
 echo -e "  ${BOLD}HTTP:${NC}       ${CYAN}http://${DOMAIN}${NC} → redirect to HTTPS"
 echo ""
 echo -e "  ${YELLOW}━━━ Update your Xray / Remnawave node config ━━━${NC}"

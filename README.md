@@ -1,69 +1,82 @@
-# SelfSteal Caddy 404 Stub
+# SelfSteal Caddy Stub
 
-Automated setup script for **SelfSteal** technique on [Remnawave](https://github.com/remnawave) + Xray Reality nodes.
+Скрипт автоматической установки **SelfSteal** заглушки для нод [Remnawave](https://github.com/remnawave) + Xray Reality.
 
-Installs [Caddy](https://caddyserver.com/) as a local HTTPS backend with a stylish 404 stub page, so your Reality node uses **your own domain** with a valid TLS certificate instead of masquerading as someone else's site.
+Устанавливает [Caddy](https://caddyserver.com/) как локальный HTTPS-бэкенд с заглушкой, чтобы ваша Reality нода использовала **собственный домен** с валидным TLS-сертификатом вместо маскировки под чужой сайт.
 
-## How it works
+## Как это работает
 
 ```
-Client (SNI: your-domain.com)
+Клиент (SNI: your-domain.com)
         │
         ▼
   Xray Reality (:443)
         │
-        ├── VPN client? ──► VPN tunnel
+        ├── VPN клиент? ──► VPN туннель
         │
-        └── Probe/scanner? ──► proxy to 127.0.0.1:8443
+        └── Зонд/сканер? ──► проксирует на 127.0.0.1:8443
                                         │
                                         ▼
-                               Caddy (valid TLS cert
-                               for your-domain.com)
+                               Caddy (валидный TLS-сертификат
+                               для your-domain.com)
                                         │
                                         ▼
-                                  404 stub page
+                                  Страница-заглушка
 ```
 
-DPI or active probing sees a legitimate TLS certificate matching the SNI — nothing suspicious.
+DPI или активное зондирование видит легитимный TLS-сертификат, совпадающий с SNI — ничего подозрительного.
 
-## Requirements
+## Варианты заглушек
 
-- Debian / Ubuntu server
-- Root access
-- Domain with DNS A record pointing to your server IP
-- Xray Reality node (Remnawave or standalone)
+Установщик включает **3 встроенные страницы** на выбор:
 
-## Installation
+| # | Название | Описание |
+|---|----------|----------|
+| 1 | **Minimal 404** | Тёмная, минималистичная страница 404 с градиентной анимацией |
+| 2 | **Cat Memes 404** | Весёлая 404 с летающими котиками и игривым дизайном |
+| 3 | **Business Site** | Профессиональный лендинг IT-компании (NovaTech) |
 
-**One command:**
+После установки можно заменить заглушку на любой свой HTML.
+
+## Требования
+
+- Сервер на Debian / Ubuntu
+- Root-доступ
+- Домен с DNS A-записью, указывающей на IP сервера
+- Нода Xray Reality (Remnawave или standalone)
+
+## Установка
+
+**Одной командой:**
 
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/SkunkBG/SelfstealCaddy/main/selfsteal-setup.sh)
 ```
 
-**Or manually:**
+**Или вручную:**
 
 ```bash
 curl -Lo selfsteal-setup.sh https://raw.githubusercontent.com/SkunkBG/SelfstealCaddy/main/selfsteal-setup.sh
 bash selfsteal-setup.sh
 ```
 
-The script will ask for your domain interactively.
+Скрипт запросит домен и предложит выбрать заглушку.
 
-## What the script does
+## Что делает скрипт
 
-1. Checks DNS resolution for your domain
-2. Installs Caddy (if not already installed)
-3. Creates a styled 404 HTML page at `/var/www/html/404.html`
-4. Configures Caddy:
-   - Port `80` — Let's Encrypt certificate + HTTP → HTTPS redirect
-   - Port `8443` — HTTPS with valid TLS certificate, serves 404 page
-5. Configures UFW firewall (opens `80`, `443`, closes `8443`)
-6. Starts Caddy and verifies the certificate
+1. Запрашивает домен и выбор заглушки
+2. Проверяет DNS-резолв
+3. Устанавливает Caddy (если ещё не установлен)
+4. Создаёт выбранную страницу в `/var/www/html/index.html`
+5. Настраивает Caddy:
+   - Порт `80` — получение сертификата Let's Encrypt + редирект HTTP → HTTPS
+   - Порт `8443` — HTTPS с валидным сертификатом, отдаёт заглушку
+6. Настраивает UFW (открывает `80`, `443`, закрывает `8443`)
+7. Запускает Caddy и проверяет сертификат
 
-## After installation
+## После установки
 
-Update your Xray / Remnawave node config — change two fields in `realitySettings`:
+Обновите конфиг Xray / Remnawave ноды — измените два поля в `realitySettings`:
 
 ```json
 "realitySettings": {
@@ -72,65 +85,71 @@ Update your Xray / Remnawave node config — change two fields in `realitySettin
 }
 ```
 
-| Before | After |
-|--------|-------|
+| Было | Стало |
+|------|-------|
 | `"target": "www.google.com:443"` | `"target": "127.0.0.1:8443"` |
 | `"serverNames": ["google.com"]` | `"serverNames": ["your-domain.com"]` |
 
-Everything else in the config (`shortIds`, `privateKey`, routing, outbounds) stays the same.
+Всё остальное в конфиге (`shortIds`, `privateKey`, routing, outbounds) остаётся без изменений.
 
-## Ports
+## Порты
 
-| Port | Service | Access |
-|------|---------|--------|
-| `443` | Xray Reality | Public — VPN connections |
-| `80` | Caddy | Public — certificate renewal + redirect |
-| `8443` | Caddy HTTPS | **Internal only** (`127.0.0.1`) |
+| Порт | Сервис | Доступ |
+|------|--------|--------|
+| `443` | Xray Reality | Публичный — VPN-подключения |
+| `80` | Caddy | Публичный — обновление сертификата + редирект |
+| `8443` | Caddy HTTPS | **Только локальный** (`127.0.0.1`) |
 
-## File locations
+## Расположение файлов
 
-| File | Path |
+| Файл | Путь |
 |------|------|
-| 404 page | `/var/www/html/404.html` |
-| Caddy config | `/etc/caddy/Caddyfile` |
-| Caddy config backup | `/etc/caddy/Caddyfile.bak.*` |
+| Страница-заглушка | `/var/www/html/index.html` |
+| Конфиг Caddy | `/etc/caddy/Caddyfile` |
+| Бэкап конфига | `/etc/caddy/Caddyfile.bak.*` |
 
-## Customization
+## Кастомизация
 
-To change the 404 page design, edit `/var/www/html/404.html` and restart Caddy:
+Замените заглушку на любой свой HTML:
 
 ```bash
-nano /var/www/html/404.html
+nano /var/www/html/index.html
 systemctl restart caddy
 ```
 
-## Uninstall
+Или перезапустите скрипт для выбора другой заглушки:
+
+```bash
+bash selfsteal-setup.sh
+```
+
+## Удаление
 
 ```bash
 systemctl stop caddy
 systemctl disable caddy
 apt remove caddy -y
-rm -rf /var/www/html/404.html
+rm -rf /var/www/html
 rm -f /etc/apt/sources.list.d/caddy-stable.list
 rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 ```
 
-## Troubleshooting
+## Решение проблем
 
-**Caddy won't start:**
+**Caddy не запускается:**
 ```bash
 journalctl -u caddy --no-pager -n 30
 ```
 
-**Certificate not issued:**
-- Make sure port `80` is open and DNS A record points to your server
-- Check: `curl -I http://your-domain.com`
+**Сертификат не выдаётся:**
+- Убедитесь что порт `80` открыт и DNS A-запись указывает на сервер
+- Проверьте: `curl -I http://your-domain.com`
 
-**Test HTTPS manually:**
+**Проверка HTTPS вручную:**
 ```bash
 curl -I https://your-domain.com:8443
 ```
 
-## License
+## Лицензия
 
 MIT
