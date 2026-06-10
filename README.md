@@ -1,83 +1,84 @@
-# SelfSteal Mem
+# SelfSteal Caddy Stub
 
-Single-command installer of a **SelfSteal** stub backend for [Remnawave](https://github.com/remnawave) + Xray Reality nodes.
+Скрипт автоматической установки **SelfSteal**-заглушки для нод [Remnawave](https://github.com/remnawave) + Xray Reality.
 
-It installs [Caddy](https://caddyserver.com/) as a local HTTPS backend serving one ordinary-looking website, so your Reality node masquerades behind **your own domain** with a valid TLS certificate — and, just as importantly, behaves like a real static site under active probing.
+Устанавливает [Caddy](https://caddyserver.com/) как локальный HTTPS-бэкенд с одной аккуратной страницей, чтобы ваша Reality-нода маскировалась под **собственный домен** с валидным TLS-сертификатом — и, что не менее важно, вела себя как обычный статический сайт при активном зондировании.
 
-## How it works
+## Как это работает
 
 ```
-Client (SNI: your-domain.com)
+Клиент (SNI: your-domain.com)
         │
         ▼
-  Xray Reality (:443)            ◄── public surface, looks like normal HTTPS
+  Xray Reality (:443)            ◄── публичная поверхность, выглядит как обычный HTTPS
         │
-        ├── VPN client? ──► VPN tunnel
+        ├── VPN-клиент? ──► VPN-туннель
         │
-        └── Probe/scanner? ──► proxied to 127.0.0.1:8443
+        └── Зонд/сканер? ──► проксирует на 127.0.0.1:8443
                                         │
                                         ▼
-                               Caddy (valid TLS cert for your-domain.com)
+                               Caddy (валидный TLS-сертификат
+                               для your-domain.com)
                                         │
                                         ▼
-                                  Stub website
+                                  Страница-заглушка
 ```
 
-A DPI box or active prober sees a legitimate cert that matches the SNI and a perfectly ordinary website — nothing that flags as a VPN.
+DPI или активное зондирование видит легитимный сертификат, совпадающий с SNI, и обычный сайт — ничего подозрительного.
 
-## What makes the stub look like a real site
+## Что делает заглушку похожей на настоящий сайт
 
-The whole point of a SelfSteal page is to be unremarkable when probed. This build is tuned so that the backend is hard to distinguish from a normal static HTTPS site:
+Смысл SelfSteal-страницы — быть неприметной при зондировании. Эта версия заточена так, чтобы бэкенд было трудно отличить от обычного статического HTTPS-сайта:
 
-- **One clean landing page** — a light, editorial design-studio site (*Northbound*). System fonts only, all CSS inline, **zero external requests, zero JS**. It loads like plain static content and leaves no extra network traces.
-- **Honest status codes** — `GET /` returns `200`; unknown paths return a real `404`. Many naive stubs answer **every** path with `200` (an SPA-style catch-all), which is a well-known SelfSteal tell. This one doesn't.
-- **A complete-looking site** — ships `favicon.ico` and `robots.txt`, so a browser-like prober doesn't get a bare 404 on `/favicon.ico` or a missing `robots.txt`.
-- **Normal server behavior** — `gzip`/`zstd` compression, `ETag` / `Last-Modified` from the file server, and sensible cache headers, just like a typical web host.
-- **No `Server: Caddy` header** — that header is a common fingerprint of these setups, so it's stripped.
-- **Clean redirect** — `http://domain` → `https://domain` (port 443, implicit). No odd `:8443` leaking into the `Location` header.
+- **Одна чистая страница** — светлый редакционный лендинг дизайн-студии (*Northbound*). Только системные шрифты, весь CSS инлайн, **ноль внешних запросов и ноль JS**. Грузится как обычная статика, не оставляет лишних сетевых «следов».
+- **Честные статус-коды** — `GET /` отдаёт `200`, несуществующие пути — настоящий `404`. Многие наивные заглушки отвечают `200` **на любой** путь (SPA-фоллбэк) — это известный маркер self-steal. Здесь так не происходит.
+- **Сайт выглядит законченным** — есть `favicon.ico` и `robots.txt`, чтобы браузероподобный зонд не получал голый 404 на `/favicon.ico` и отсутствующий `robots.txt`.
+- **Нормальное поведение сервера** — сжатие `gzip`/`zstd`, `ETag` / `Last-Modified` от файлового сервера и адекватные кэш-заголовки, как у обычного хостинга.
+- **Убран заголовок `Server: Caddy`** — он сам по себе выдаёт такие сборки.
+- **Чистый редирект** — `http://домен` → `https://домен` (порт 443, неявно). Никакого «странного» `:8443` в заголовке `Location`.
 
-The email address on the page is auto-filled to your domain (`hello@your-domain.com`).
+Email на странице автоматически подставляется на ваш домен (`hello@your-domain.com`).
 
-> **Note.** The page only protects you against *active probing* of the backend. The traffic shape your clients generate is determined by Xray Reality / your inbound settings, not by this page.
+> **Важно.** Страница защищает только от *активного зондирования* бэкенда. Форму трафика, которую генерируют клиенты, определяет Xray Reality / настройки инбаунда, а не эта страница.
 
-## Requirements
+## Требования
 
-- Debian / Ubuntu server
-- Root access
-- A domain with a DNS A record pointing to the server IP
-- An Xray Reality node (Remnawave or standalone)
+- Сервер на Debian / Ubuntu
+- Root-доступ
+- Домен с DNS A-записью, указывающей на IP сервера
+- Нода Xray Reality (Remnawave или standalone)
 
-## Install
+## Установка
 
-**One command:**
-
-```
-bash <(curl -Ls https://raw.githubusercontent.com/SkunkBG/SelfStealMem/main/selfsteal-setup.sh)
-```
-
-**Or manually:**
+**Одной командой:**
 
 ```
-curl -Lo selfsteal-setup.sh https://raw.githubusercontent.com/SkunkBG/SelfStealMem/main/selfsteal-setup.sh
+bash <(curl -Ls https://raw.githubusercontent.com/SkunkBG/SelfstealCaddy/main/selfsteal-setup.sh)
+```
+
+**Или вручную:**
+
+```
+curl -Lo selfsteal-setup.sh https://raw.githubusercontent.com/SkunkBG/SelfstealCaddy/main/selfsteal-setup.sh
 bash selfsteal-setup.sh
 ```
 
-The script asks only for your domain.
+Скрипт запросит только домен.
 
-## What the script does
+## Что делает скрипт
 
-1. Asks for the domain and checks DNS resolution
-2. Installs Caddy (if not already present)
-3. Writes the site to `/var/www/html/` (`index.html`, `404.html`, `robots.txt`, `favicon.ico`)
-4. Configures Caddy:
-   - port `80` — Let's Encrypt challenge + HTTP→HTTPS redirect
-   - port `8443` — HTTPS backend with a valid certificate, compression, security/cache headers, real 404s
-5. Configures UFW (opens `80`, `443`; closes `8443`)
-6. Validates the config, starts Caddy, and verifies that `/` → `200` and unknown paths → `404`
+1. Запрашивает домен и проверяет DNS-резолв
+2. Устанавливает Caddy (если ещё не установлен)
+3. Создаёт файлы сайта в `/var/www/html/` (`index.html`, `404.html`, `robots.txt`, `favicon.ico`)
+4. Настраивает Caddy:
+   - порт `80` — получение сертификата Let's Encrypt + редирект HTTP → HTTPS
+   - порт `8443` — HTTPS с валидным сертификатом, сжатие, security/cache-заголовки, честные 404
+5. Настраивает UFW (открывает `80`, `443`, закрывает `8443`)
+6. Валидирует конфиг, запускает Caddy и проверяет, что `/` → `200`, а неизвестный путь → `404`
 
-## After install
+## После установки
 
-Update your Xray / Remnawave node — change two fields in `realitySettings`:
+Обновите конфиг Xray / Remnawave-ноды — измените два поля в `realitySettings`:
 
 ```
 "realitySettings": {
@@ -86,44 +87,44 @@ Update your Xray / Remnawave node — change two fields in `realitySettings`:
 }
 ```
 
-| Before                           | After                                |
+| Было                             | Стало                                |
 | -------------------------------- | ------------------------------------ |
 | `"target": "www.google.com:443"` | `"target": "127.0.0.1:8443"`         |
 | `"serverNames": ["google.com"]`  | `"serverNames": ["your-domain.com"]` |
 
-Everything else (`shortIds`, `privateKey`, routing, outbounds) stays unchanged.
+Всё остальное в конфиге (`shortIds`, `privateKey`, routing, outbounds) остаётся без изменений.
 
-## Ports
+## Порты
 
-| Port   | Service       | Access                                      |
-| ------ | ------------- | ------------------------------------------- |
-| `443`  | Xray Reality  | Public — VPN connections                    |
-| `80`   | Caddy         | Public — certificate renewal + redirect     |
-| `8443` | Caddy HTTPS   | **Local only** (`127.0.0.1`)                |
+| Порт   | Сервис       | Доступ                                        |
+| ------ | ------------ | --------------------------------------------- |
+| `443`  | Xray Reality | Публичный — VPN-подключения                   |
+| `80`   | Caddy        | Публичный — обновление сертификата + редирект |
+| `8443` | Caddy HTTPS  | **Только локальный** (`127.0.0.1`)            |
 
-## File locations
+## Расположение файлов
 
-| File          | Path                         |
-| ------------- | ---------------------------- |
-| Landing page  | `/var/www/html/index.html`   |
-| 404 page      | `/var/www/html/404.html`     |
-| robots.txt    | `/var/www/html/robots.txt`   |
-| favicon       | `/var/www/html/favicon.ico`  |
-| Caddy config  | `/etc/caddy/Caddyfile`       |
-| Config backup | `/etc/caddy/Caddyfile.bak.*` |
+| Файл              | Путь                         |
+| ----------------- | ---------------------------- |
+| Страница-заглушка | `/var/www/html/index.html`   |
+| Страница 404      | `/var/www/html/404.html`     |
+| robots.txt        | `/var/www/html/robots.txt`   |
+| favicon           | `/var/www/html/favicon.ico`  |
+| Конфиг Caddy      | `/etc/caddy/Caddyfile`       |
+| Бэкап конфига     | `/etc/caddy/Caddyfile.bak.*` |
 
-## Customization
+## Кастомизация
 
-Replace the page with any HTML you like:
+Замените страницу на любой свой HTML:
 
 ```
 nano /var/www/html/index.html
 systemctl restart caddy
 ```
 
-To change the *Northbound* copy (studio name, services, work list, email), edit the `index.html` heredoc block in `selfsteal-setup.sh` and re-run, or edit the file in place.
+Чтобы изменить тексты *Northbound* (название студии, услуги, список работ, email), правьте блок heredoc `index.html` в `selfsteal-setup.sh` или редактируйте файл на месте.
 
-## Removal
+## Удаление
 
 ```
 systemctl stop caddy
@@ -134,26 +135,26 @@ rm -f /etc/apt/sources.list.d/caddy-stable.list
 rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 ```
 
-## Troubleshooting
+## Решение проблем
 
-**Caddy won't start:**
+**Caddy не запускается:**
 
 ```
 journalctl -u caddy --no-pager -n 30
 ```
 
-**Certificate not issued:**
+**Сертификат не выдаётся:**
 
-- Make sure port `80` is open and the DNS A record points to the server
-- Check: `curl -I http://your-domain.com`
+- Убедитесь, что порт `80` открыт и DNS A-запись указывает на сервер
+- Проверьте: `curl -I http://your-domain.com`
 
-**Manual HTTPS check (local backend):**
+**Проверка HTTPS вручную (локальный бэкенд):**
 
 ```
 curl -I https://your-domain.com:8443
-curl -o /dev/null -w "%{http_code}\n" https://your-domain.com:8443/nope   # expect 404
+curl -o /dev/null -w "%{http_code}\n" https://your-domain.com:8443/nope   # ожидаем 404
 ```
 
-## License
+## Лицензия
 
 MIT
