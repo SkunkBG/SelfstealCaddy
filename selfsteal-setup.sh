@@ -1,12 +1,21 @@
 #!/bin/bash
 
-# ============================================
-#  SelfSteal Caddy Stub Installer
+# ============================================================
+#  SelfSteal Caddy Stub Installer  (single-page, DPI-hardened)
 #  For Remnawave + Xray Reality nodes
 #
 #  Usage: bash selfsteal-setup.sh
 #  Requirements: Debian/Ubuntu, root access
-# ============================================
+#
+#  Цель: бэкенд-заглушка, неотличимая от обычного статического
+#  HTTPS-сайта при активном зондировании TSPU/DPI:
+#    - один аккуратный лендинг (200 на /),
+#    - честный 404 на несуществующие пути (не «всё → 200»),
+#    - favicon.ico и robots.txt, чтобы сайт выглядел законченным,
+#    - gzip/zstd-сжатие и кэш-заголовки как у нормального сервера,
+#    - убран заголовок Server: Caddy (типичный маркер self-steal),
+#    - редирект 80 → https://домен (на 443, без «странного» :8443).
+# ============================================================
 
 set -e
 
@@ -21,8 +30,8 @@ NC='\033[0m'
 echo -e "${CYAN}"
 cat << 'BANNER'
  ╔═══════════════════════════════════════════════╗
- ║       SelfSteal Caddy Stub Installer          ║
- ║       For Remnawave + Xray Reality nodes       ║
+ ║       SelfSteal Caddy Stub Installer           ║
+ ║       single-page · DPI-hardened               ║
  ╚═══════════════════════════════════════════════╝
 BANNER
 echo -e "${NC}"
@@ -43,26 +52,6 @@ if [[ -z "$DOMAIN" ]]; then
 fi
 
 DOMAIN=$(echo "$DOMAIN" | xargs)
-
-# ---- Stub page selection ----
-echo ""
-echo -e "${BOLD}  Choose a stub page:${NC}"
-echo ""
-echo -e "  ${CYAN}1)${NC} ${BOLD}Minimal 404${NC}        ${DIM}— Dark, clean 404 error page${NC}"
-echo -e "  ${CYAN}2)${NC} ${BOLD}Cat Memes 404${NC}      ${DIM}— Fun 404 with floating cats${NC}"
-echo -e "  ${CYAN}3)${NC} ${BOLD}Business Site${NC}       ${DIM}— Professional tech company landing page${NC}"
-echo ""
-read -rp "$(echo -e "${YELLOW}[?] Select (1/2/3) [default: 1]: ${NC}")" STUB_CHOICE
-
-STUB_CHOICE=${STUB_CHOICE:-1}
-
-if [[ ! "$STUB_CHOICE" =~ ^[1-3]$ ]]; then
-    echo -e "${YELLOW}[!] Invalid choice, using default (1)${NC}"
-    STUB_CHOICE=1
-fi
-
-STUB_NAMES=("Minimal 404" "Cat Memes 404" "Business Site")
-echo -e "${GREEN}[✓] Selected: ${STUB_NAMES[$((STUB_CHOICE-1))]}${NC}"
 
 # ---- Check DNS ----
 echo -e "${CYAN}[*] Checking DNS for ${DOMAIN}...${NC}"
@@ -118,212 +107,238 @@ else
     fi
 fi
 
-# ---- Create stub page ----
-echo -e "${CYAN}[*] Creating stub page...${NC}"
-
+# ---- Web root ----
+echo -e "${CYAN}[*] Creating site files...${NC}"
 mkdir -p /var/www/html
 
-# --- Stub 1: Minimal 404 ---
-create_stub_minimal() {
-cat > /var/www/html/index.html << 'HTMLEOF'
+# ---- index.html : Northbound studio landing (self-contained, no JS, no external requests) ----
+cat > /var/www/html/index.html << HTMLEOF
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>404 - Page Not Found</title>
+    <title>Northbound — Design Studio</title>
+    <meta name="description" content="Northbound is an independent design studio working on brand identity, digital products and art direction for considered, long-lived companies.">
+    <meta name="theme-color" content="#f3efe6">
+    <link rel="canonical" href="https://${DOMAIN}/">
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Northbound — Design Studio">
+    <meta property="og:description" content="Independent design studio. Brand identity, digital products and art direction.">
+    <meta property="og:url" content="https://${DOMAIN}/">
     <style>
+        :root{
+            --paper:#f3efe6;--ink:#1c1a16;--muted:#6f6a5f;--line:#ddd6c8;
+            --clay:#a9542f;--cream:#fbf9f4;--max:1080px;
+            --serif:ui-serif,Georgia,'Times New Roman',serif;
+            --sans:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;
+        }
         *{margin:0;padding:0;box-sizing:border-box}
-        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e0e0e0;display:flex;justify-content:center;align-items:center;min-height:100vh}
-        .container{text-align:center;padding:2rem}
-        .error-code{font-size:clamp(6rem,20vw,12rem);font-weight:800;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1;margin-bottom:1rem;animation:pulse 3s ease-in-out infinite}
-        .message{font-size:1.3rem;color:#888;margin-bottom:.5rem}
-        .sub{font-size:.95rem;color:#555}
-        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+        html{scroll-behavior:smooth}
+        body{
+            font-family:var(--sans);background:var(--paper);color:var(--ink);
+            line-height:1.6;-webkit-font-smoothing:antialiased;
+            background-image:radial-gradient(circle at 18% -10%,rgba(169,84,47,.06),transparent 45%);
+        }
+        .wrap{max-width:var(--max);margin:0 auto;padding:0 1.6rem}
+        a{color:inherit}
+        .reveal{opacity:0;transform:translateY(14px);animation:rise .8s cubic-bezier(.2,.7,.2,1) forwards}
+        .d1{animation-delay:.05s}.d2{animation-delay:.16s}.d3{animation-delay:.27s}
+        .d4{animation-delay:.38s}.d5{animation-delay:.49s}
+        @keyframes rise{to{opacity:1;transform:none}}
+
+        header{padding:1.8rem 0;border-bottom:1px solid var(--line)}
+        .bar{display:flex;align-items:center;justify-content:space-between}
+        .mark{font-family:var(--serif);font-size:1.35rem;letter-spacing:-.01em;font-weight:600}
+        .mark b{color:var(--clay);font-weight:600}
+        nav ul{list-style:none;display:flex;gap:1.9rem}
+        nav a{text-decoration:none;color:var(--muted);font-size:.9rem;letter-spacing:.02em;transition:color .25s}
+        nav a:hover,nav a:focus-visible{color:var(--ink)}
+
+        .hero{padding:6.5rem 0 5rem;border-bottom:1px solid var(--line)}
+        .eyebrow{font-size:.78rem;letter-spacing:.22em;text-transform:uppercase;color:var(--clay);margin-bottom:1.6rem}
+        .hero h1{font-family:var(--serif);font-weight:600;font-size:clamp(2.4rem,6.4vw,4.4rem);line-height:1.04;letter-spacing:-.015em;max-width:15ch}
+        .hero p{margin-top:1.7rem;max-width:54ch;color:var(--muted);font-size:1.12rem}
+        .meta{margin-top:2.6rem;display:flex;gap:2.4rem;flex-wrap:wrap;font-size:.85rem;color:var(--muted)}
+        .meta span{display:block;color:var(--ink);font-family:var(--serif);font-size:1.05rem;margin-top:.15rem}
+
+        section{padding:5rem 0;border-bottom:1px solid var(--line)}
+        .label{font-size:.78rem;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin-bottom:2.4rem}
+        .services{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:2.2rem}
+        .svc svg{width:26px;height:26px;stroke:var(--clay);fill:none;stroke-width:1.4;margin-bottom:1.1rem}
+        .svc h3{font-family:var(--serif);font-weight:600;font-size:1.3rem;margin-bottom:.5rem}
+        .svc p{color:var(--muted);font-size:.96rem}
+
+        .work a{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;
+            padding:1.35rem 0;border-top:1px solid var(--line);text-decoration:none;transition:padding-left .3s}
+        .work a:last-child{border-bottom:1px solid var(--line)}
+        .work a:hover,.work a:focus-visible{padding-left:.7rem}
+        .work .name{font-family:var(--serif);font-size:1.4rem;font-weight:600}
+        .work .cat{color:var(--muted);font-size:.9rem;flex:1;text-align:right;padding-right:1.4rem}
+        .work .yr{color:var(--clay);font-size:.85rem;font-variant-numeric:tabular-nums}
+
+        .contact{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:2rem}
+        .contact h2{font-family:var(--serif);font-weight:600;font-size:clamp(1.8rem,4.4vw,2.8rem);line-height:1.1;letter-spacing:-.01em}
+        .contact .email{font-size:1.15rem;color:var(--clay);text-decoration:none;border-bottom:1px solid transparent;transition:border-color .25s}
+        .contact .email:hover,.contact .email:focus-visible{border-color:var(--clay)}
+
+        footer{padding:2.4rem 0;display:flex;flex-wrap:wrap;gap:1rem;justify-content:space-between;
+            color:var(--muted);font-size:.82rem}
+
+        :focus-visible{outline:2px solid var(--clay);outline-offset:3px;border-radius:2px}
+        @media (max-width:640px){
+            nav{display:none}
+            .hero{padding:4.5rem 0 3.5rem}
+            .work .cat{display:none}
+        }
+        @media (prefers-reduced-motion:reduce){
+            .reveal{animation:none;opacity:1;transform:none}
+            html{scroll-behavior:auto}
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="error-code">404</div>
-        <p class="message">Page Not Found</p>
-        <p class="sub">The requested resource could not be located on this server.</p>
-    </div>
+    <header>
+        <div class="wrap bar reveal d1">
+            <div class="mark">North<b>bound</b></div>
+            <nav aria-label="Primary">
+                <ul>
+                    <li><a href="#work">Work</a></li>
+                    <li><a href="#studio">Studio</a></li>
+                    <li><a href="#contact">Contact</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <div class="hero">
+            <div class="wrap">
+                <p class="eyebrow reveal d1">Independent design studio</p>
+                <h1 class="reveal d2">Quiet design for brands that intend to last.</h1>
+                <p class="reveal d3">We partner with founders and small teams on identity, product and the in-between — the unglamorous details that make a brand feel considered rather than assembled.</p>
+                <div class="meta reveal d4">
+                    <div>Established<span>2014</span></div>
+                    <div>Practice<span>Brand &amp; Digital</span></div>
+                    <div>Engagements<span>By referral</span></div>
+                </div>
+            </div>
+        </div>
+
+        <section id="studio">
+            <div class="wrap">
+                <p class="label reveal d1">What we do</p>
+                <div class="services">
+                    <div class="svc reveal d2">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></svg>
+                        <h3>Brand Identity</h3>
+                        <p>Naming, marks, typography and the systems that hold a brand together as it grows.</p>
+                    </div>
+                    <div class="svc reveal d3">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18M8 21h8"/></svg>
+                        <h3>Digital Product</h3>
+                        <p>Interfaces and websites designed to be calm to use and unremarkable to maintain.</p>
+                    </div>
+                    <div class="svc reveal d4">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5l8 6 8-6v14"/></svg>
+                        <h3>Editorial &amp; Art Direction</h3>
+                        <p>Print, photography direction and the long-form pieces that give a brand a voice.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="work" class="work">
+            <div class="wrap">
+                <p class="label reveal d1">Selected work</p>
+                <div class="reveal d2">
+                    <a href="#"><span class="name">Marbury &amp; Crane</span><span class="cat">Identity, Packaging</span><span class="yr">2024</span></a>
+                    <a href="#"><span class="name">Harbon Coffee</span><span class="cat">Brand, Web</span><span class="yr">2023</span></a>
+                    <a href="#"><span class="name">Field Atlas</span><span class="cat">Editorial, Art Direction</span><span class="yr">2023</span></a>
+                    <a href="#"><span class="name">Sable Architects</span><span class="cat">Identity, Digital</span><span class="yr">2022</span></a>
+                    <a href="#"><span class="name">Quill Press</span><span class="cat">Naming, Brand System</span><span class="yr">2021</span></a>
+                </div>
+            </div>
+        </section>
+
+        <section id="contact">
+            <div class="wrap contact">
+                <h2 class="reveal d1">Have something<br>worth making well?</h2>
+                <a class="email reveal d2" href="mailto:hello@${DOMAIN}">hello@${DOMAIN}</a>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="wrap bar">
+            <span>&copy; 2026 Northbound Studio</span>
+            <span>By appointment &middot; Replies within two working days</span>
+        </div>
+    </footer>
 </body>
 </html>
 HTMLEOF
-}
 
-# --- Stub 2: Cat Memes 404 ---
-create_stub_cats() {
-cat > /var/www/html/index.html << 'HTMLEOF'
+# ---- 404.html : on-brand error page (served WITH 404 status) ----
+cat > /var/www/html/404.html << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>404 - Oops!</title>
+    <title>Page not found — Northbound</title>
+    <meta name="robots" content="noindex">
+    <link rel="icon" href="/favicon.ico" sizes="any">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap');
+        :root{--paper:#f3efe6;--ink:#1c1a16;--muted:#6f6a5f;--clay:#a9542f;
+            --serif:ui-serif,Georgia,'Times New Roman',serif;
+            --sans:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif}
         *{margin:0;padding:0;box-sizing:border-box}
-        body{font-family:'Fredoka',sans-serif;background:#1a1525;color:#e0e0e0;display:flex;justify-content:center;align-items:center;min-height:100vh;overflow:hidden}
-        .container{text-align:center;padding:2rem;position:relative;z-index:1}
-        .cat-wrapper{position:relative;display:inline-block;margin-bottom:1.5rem}
-        .cat{font-size:8rem;line-height:1;filter:drop-shadow(0 0 30px rgba(255,150,200,0.3));animation:float 3s ease-in-out infinite}
-        .sparkles{position:absolute;top:-10px;right:-20px;font-size:2rem;animation:spin 4s linear infinite}
-        .error-code{font-size:clamp(4rem,15vw,8rem);font-weight:700;background:linear-gradient(135deg,#ff6b9d,#c44dff,#6e8efb);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1;margin-bottom:.5rem}
-        .message{font-size:1.4rem;color:#c4a0ff;margin-bottom:.5rem;font-weight:600}
-        .sub{font-size:1rem;color:#7a6b8a;max-width:400px;margin:0 auto}
-        .paws{margin-top:1.5rem;font-size:1.5rem;opacity:.5;letter-spacing:8px;animation:walk 2s ease-in-out infinite}
-        .bg-cats{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;overflow:hidden}
-        .bg-cat{position:absolute;font-size:2rem;opacity:.06;animation:drift 20s linear infinite}
-        .bg-cat:nth-child(1){left:10%;top:-5%;animation-delay:0s;animation-duration:18s}
-        .bg-cat:nth-child(2){left:30%;top:-5%;animation-delay:3s;animation-duration:22s}
-        .bg-cat:nth-child(3){left:50%;top:-5%;animation-delay:6s;animation-duration:20s}
-        .bg-cat:nth-child(4){left:70%;top:-5%;animation-delay:2s;animation-duration:24s}
-        .bg-cat:nth-child(5){left:90%;top:-5%;animation-delay:8s;animation-duration:19s}
-        .bg-cat:nth-child(6){left:20%;top:-5%;animation-delay:11s;animation-duration:21s}
-        .bg-cat:nth-child(7){left:60%;top:-5%;animation-delay:5s;animation-duration:23s}
-        .bg-cat:nth-child(8){left:80%;top:-5%;animation-delay:9s;animation-duration:17s}
-        @keyframes float{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-15px) rotate(3deg)}}
-        @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
-        @keyframes walk{0%,100%{transform:translateX(0)}50%{transform:translateX(10px)}}
-        @keyframes drift{0%{transform:translateY(-50px) rotate(0deg)}100%{transform:translateY(110vh) rotate(360deg)}}
+        body{font-family:var(--sans);background:var(--paper);color:var(--ink);
+            min-height:100vh;display:flex;align-items:center;justify-content:center;
+            text-align:center;padding:2rem;
+            background-image:radial-gradient(circle at 18% -10%,rgba(169,84,47,.06),transparent 45%)}
+        .code{font-family:var(--serif);font-weight:600;font-size:clamp(3rem,9vw,5rem);letter-spacing:-.02em}
+        .msg{margin-top:.6rem;color:var(--muted);font-size:1.05rem}
+        .home{display:inline-block;margin-top:1.8rem;color:var(--clay);text-decoration:none;
+            border-bottom:1px solid transparent;transition:border-color .25s;font-size:.95rem}
+        .home:hover{border-color:var(--clay)}
     </style>
 </head>
 <body>
-    <div class="bg-cats">
-        <div class="bg-cat">🐱</div><div class="bg-cat">😸</div><div class="bg-cat">🐈</div>
-        <div class="bg-cat">😺</div><div class="bg-cat">🐱</div><div class="bg-cat">😻</div>
-        <div class="bg-cat">🐈</div><div class="bg-cat">😸</div>
-    </div>
-    <div class="container">
-        <div class="cat-wrapper">
-            <div class="cat">😿</div>
-            <div class="sparkles">✨</div>
-        </div>
-        <div class="error-code">404</div>
-        <p class="message">The cat knocked this page off the table</p>
-        <p class="sub">We looked everywhere — under the couch, behind the curtains, even in the box. This page simply doesn't exist.</p>
-        <div class="paws">🐾 🐾 🐾</div>
+    <div>
+        <div class="code">404</div>
+        <p class="msg">We couldn&rsquo;t find that page.</p>
+        <a class="home" href="/">Return to the studio</a>
     </div>
 </body>
 </html>
 HTMLEOF
-}
 
-# --- Stub 3: Business Site ---
-create_stub_business() {
-cat > /var/www/html/index.html << 'HTMLEOF'
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NovaTech Solutions — Digital Innovation</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Playfair+Display:wght@700&display=swap');
-        *{margin:0;padding:0;box-sizing:border-box}
-        :root{--bg:#0c0f16;--surface:#13161f;--border:#1e2230;--accent:#4f7df5;--accent2:#7c5bf5;--text:#c8cdd8;--text-dim:#5a6072;--white:#eef0f6}
-        body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);overflow-x:hidden}
-        .noise{position:fixed;top:0;left:0;width:100%;height:100%;opacity:.03;pointer-events:none;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");z-index:999}
-        nav{position:fixed;top:0;width:100%;padding:1.2rem 3rem;display:flex;justify-content:space-between;align-items:center;z-index:10;backdrop-filter:blur(20px);background:rgba(12,15,22,.7);border-bottom:1px solid var(--border)}
-        .logo{font-family:'Playfair Display',serif;font-size:1.4rem;color:var(--white);font-weight:700;letter-spacing:-.5px}
-        .logo span{color:var(--accent)}
-        nav ul{list-style:none;display:flex;gap:2rem}
-        nav a{color:var(--text-dim);text-decoration:none;font-size:.9rem;font-weight:500;transition:color .3s}
-        nav a:hover{color:var(--white)}
-        .hero{min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;padding:6rem 3rem 4rem}
-        .hero-content{max-width:800px;text-align:center;position:relative;z-index:2}
-        .badge{display:inline-block;padding:.4rem 1rem;border:1px solid var(--border);border-radius:50px;font-size:.8rem;color:var(--accent);margin-bottom:2rem;letter-spacing:1px;text-transform:uppercase}
-        h1{font-family:'Playfair Display',serif;font-size:clamp(2.5rem,6vw,4.5rem);color:var(--white);line-height:1.1;margin-bottom:1.5rem;letter-spacing:-.5px}
-        h1 em{font-style:normal;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-        .hero p{font-size:1.15rem;color:var(--text-dim);max-width:550px;margin:0 auto 2.5rem;line-height:1.7}
-        .cta-row{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap}
-        .btn{padding:.85rem 2rem;border-radius:8px;font-size:.95rem;font-weight:600;text-decoration:none;transition:all .3s;cursor:pointer;border:none;font-family:inherit}
-        .btn-primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;box-shadow:0 4px 20px rgba(79,125,245,.25)}
-        .btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(79,125,245,.35)}
-        .btn-outline{background:transparent;color:var(--text);border:1px solid var(--border)}
-        .btn-outline:hover{border-color:var(--accent);color:var(--white)}
-        .glow{position:absolute;width:500px;height:500px;border-radius:50%;filter:blur(120px);opacity:.12;pointer-events:none}
-        .glow-1{background:var(--accent);top:-100px;left:-100px}
-        .glow-2{background:var(--accent2);bottom:-100px;right:-100px}
-        .stats{display:flex;gap:3rem;justify-content:center;margin-top:4rem;padding-top:3rem;border-top:1px solid var(--border)}
-        .stat{text-align:center}
-        .stat-num{font-family:'Playfair Display',serif;font-size:2.2rem;color:var(--white);font-weight:700}
-        .stat-label{font-size:.85rem;color:var(--text-dim);margin-top:.3rem}
-        .features{padding:4rem 3rem 5rem;max-width:1000px;margin:0 auto}
-        .features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem}
-        .feature-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:2rem;transition:all .3s}
-        .feature-card:hover{border-color:var(--accent);transform:translateY(-3px)}
-        .feature-icon{width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,rgba(79,125,245,.15),rgba(124,91,245,.15));display:flex;align-items:center;justify-content:center;font-size:1.2rem;margin-bottom:1rem}
-        .feature-card h3{color:var(--white);font-size:1.05rem;margin-bottom:.5rem}
-        .feature-card p{font-size:.9rem;color:var(--text-dim);line-height:1.6}
-        footer{text-align:center;padding:2rem;border-top:1px solid var(--border);font-size:.8rem;color:var(--text-dim)}
-        @media(max-width:600px){nav{padding:1rem 1.5rem}nav ul{display:none}.hero{padding:6rem 1.5rem 3rem}.stats{flex-direction:column;gap:1.5rem}.features{padding:2rem 1.5rem}}
-    </style>
-</head>
-<body>
-    <div class="noise"></div>
-    <nav>
-        <div class="logo">Nova<span>Tech</span></div>
-        <ul>
-            <li><a href="#">Solutions</a></li>
-            <li><a href="#">About</a></li>
-            <li><a href="#">Careers</a></li>
-            <li><a href="#">Contact</a></li>
-        </ul>
-    </nav>
-    <section class="hero">
-        <div class="glow glow-1"></div>
-        <div class="glow glow-2"></div>
-        <div class="hero-content">
-            <div class="badge">Digital Transformation Partner</div>
-            <h1>Building the <em>future</em> of digital infrastructure</h1>
-            <p>We help businesses scale their technology stack with modern cloud-native solutions, enterprise security, and seamless integration.</p>
-            <div class="cta-row">
-                <a class="btn btn-primary" href="#">Get Started</a>
-                <a class="btn btn-outline" href="#">Learn More</a>
-            </div>
-            <div class="stats">
-                <div class="stat"><div class="stat-num">500+</div><div class="stat-label">Clients Worldwide</div></div>
-                <div class="stat"><div class="stat-num">99.9%</div><div class="stat-label">Uptime SLA</div></div>
-                <div class="stat"><div class="stat-num">24/7</div><div class="stat-label">Expert Support</div></div>
-            </div>
-        </div>
-    </section>
-    <section class="features">
-        <div class="features-grid">
-            <div class="feature-card">
-                <div class="feature-icon">☁️</div>
-                <h3>Cloud Solutions</h3>
-                <p>Multi-cloud architecture designed for resilience, performance, and cost optimization at any scale.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🔒</div>
-                <h3>Enterprise Security</h3>
-                <p>Zero-trust security framework with real-time threat detection and automated incident response.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">⚡</div>
-                <h3>Edge Computing</h3>
-                <p>Low-latency processing at the edge with intelligent data routing and distributed computing.</p>
-            </div>
-        </div>
-    </section>
-    <footer>&copy; 2026 NovaTech Solutions. All rights reserved.</footer>
-</body>
-</html>
-HTMLEOF
-}
+# ---- robots.txt : ordinary, allow-all ----
+cat > /var/www/html/robots.txt << 'ROBOTSEOF'
+User-agent: *
+Allow: /
+ROBOTSEOF
 
-# ---- Generate selected stub ----
-case "$STUB_CHOICE" in
-    1) create_stub_minimal ;;
-    2) create_stub_cats ;;
-    3) create_stub_business ;;
-esac
+# ---- favicon.ico : small embedded mark, so /favicon.ico returns 200 ----
+base64 -d > /var/www/html/favicon.ico << 'ICOEOF'
+AAABAAEAEBAAAAAAIACOAgAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAQAAAAEAgGAAAAH/P/YQAA
+AlVJREFUeJx1kUFIVFEUhr9z3/W90STSpKIhQsMowSkLbFEEEgRtIsTKIIsWbSXXrdu0cRkELYJA
+TQkCIWhZtAkpkSRMTEKMskkmdXTm+d49Ld6MOmYH7ubc8/985/wCMNCZuZ6y5kGk2ugUAYSdS42g
+VmS2ELn7N15MDMlg18mrvuE5QOhU5f/ixAHUNyLJPNcM6voBwtjFFWIRxHjJky1tkDB2ceLm+q0R
+SYdOERFvUyu4KGK9uAaqeH6A5weoavnfC51iRNJWoQJbjGE9v8yBU+c4ePo84XKOML/E1Mun+Lvr
+0Dguk6CgdvvB1CmenyLT00tDcxsAxZVFvo+9YTX7A6/K3yABxGwVi2cJl3McvXyThuY2onCFKMwT
+1NaRuXWPOCxul2A2rQzRWp66pmO0dN0FIDs1wc+J96g6Dp+9RLq9g3DlD2I2zoWtyCeOydzuI6it
+J14v8PHJQ6LCKvtb2/H8gExPLwufxtA4KpFoQiDGI8wv0XjhCofOXARg+tUAi9OTLM3N8mX0GSKW
++qZWjnfeIVxdRozZJFB12FQ1vz5/4NvbUeqOtDA5+AibqkZEmBx+TLq9g6W5r8y9e01VaheqLll9
+qOuEAwQR4mIBRKip30ch9xuxyYYaRQR79lJYXMC5GJuqgSQJtQLiAFHFBikA1nJZjK0qDyHWUsxl
+MX6Ah6Dq0CQBMU513jeCqsaqiqpWiBMERUo9VYeqxr4RnOq8QUwfgO8ZT0HLgn+q1FNQ3yvlKKbP
+dI+MDxcj1y0w4wlK2WTnUk9QgZli5Lq7R8aH/wKImhKGbGsTWQAAAABJRU5ErkJggg==
+ICOEOF
 
-echo -e "${GREEN}[✓] Stub page created${NC}"
+echo -e "${GREEN}[✓] Site files created (index.html, 404.html, robots.txt, favicon.ico)${NC}"
 
 # ---- Configure Caddy ----
 echo -e "${CYAN}[*] Configuring Caddy...${NC}"
@@ -332,37 +347,58 @@ if [[ -f /etc/caddy/Caddyfile ]]; then
     cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak.$(date +%s)"
 fi
 
-# Determine response code based on stub type
-if [[ "$STUB_CHOICE" == "3" ]]; then
-    RESPONSE_CODE="200"
-else
-    RESPONSE_CODE="404"
-fi
-
 cat > /etc/caddy/Caddyfile << CADDYEOF
 {
     http_port 80
     https_port 8443
 }
 
+# HTTP :80 — used by Caddy for the ACME (Let's Encrypt) challenge.
+# Everything else is redirected to plain https://domain (port 443),
+# so the public surface looks like an ordinary site on 443 — Xray
+# Reality fronts this backend for probes. No odd :8443 in Location.
 ${DOMAIN}:80 {
-    redir https://${DOMAIN}:8443{uri} permanent
+    redir https://${DOMAIN}{uri} permanent
 }
 
+# HTTPS backend on 127.0.0.1:8443 — what Reality proxies probes to.
 ${DOMAIN}:8443 {
+    root * /var/www/html
+
+    # Behave like a normal server: negotiate compression.
+    encode zstd gzip
+
     header {
+        # Drop the "Server: Caddy" tell; ordinary sites don't advertise it.
+        -Server
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
         X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Cache-Control "public, max-age=600"
     }
-    root * /var/www/html
-    try_files {path} /index.html
+
+    # Real sites return 404 for unknown paths. Serve the on-brand
+    # 404 page but KEEP the real status code (not a blanket 200).
+    handle_errors {
+        rewrite * /404.html
+        file_server {
+            status {err.status_code}
+        }
+    }
+
+    # No try_files / SPA fallback: missing files 404 naturally.
     file_server
 }
 CADDYEOF
 
 caddy fmt --overwrite /etc/caddy/Caddyfile > /dev/null 2>&1 || true
-echo -e "${GREEN}[✓] Caddyfile configured${NC}"
+
+if caddy validate --config /etc/caddy/Caddyfile > /dev/null 2>&1; then
+    echo -e "${GREEN}[✓] Caddyfile configured and validated${NC}"
+else
+    echo -e "${YELLOW}[!] caddy validate reported issues — check /etc/caddy/Caddyfile${NC}"
+fi
 
 # ---- Firewall ----
 echo -e "${CYAN}[*] Configuring firewall...${NC}"
@@ -393,15 +429,22 @@ else
     exit 1
 fi
 
-# ---- Verify ----
-HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "https://${DOMAIN}:8443" 2>/dev/null || echo "000")
+# ---- Verify (local) ----
+ROOT_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "https://${DOMAIN}:8443/" 2>/dev/null || echo "000")
+NF_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "https://${DOMAIN}:8443/this-path-does-not-exist-$RANDOM" 2>/dev/null || echo "000")
 
-if [[ "$HTTP_CODE" =~ ^(200|404)$ ]]; then
-    echo -e "${GREEN}[✓] HTTPS works, stub page served (HTTP ${HTTP_CODE})${NC}"
-elif [[ "$HTTP_CODE" == "000" ]]; then
-    echo -e "${YELLOW}[!] Could not verify HTTPS yet (cert may still be issuing)${NC}"
+if [[ "$ROOT_CODE" == "200" ]]; then
+    echo -e "${GREEN}[✓] Homepage serves HTTP 200${NC}"
+elif [[ "$ROOT_CODE" == "000" ]]; then
+    echo -e "${YELLOW}[!] Could not verify homepage yet (cert may still be issuing)${NC}"
 else
-    echo -e "${YELLOW}[!] Got HTTP ${HTTP_CODE}${NC}"
+    echo -e "${YELLOW}[!] Homepage returned HTTP ${ROOT_CODE}${NC}"
+fi
+
+if [[ "$NF_CODE" == "404" ]]; then
+    echo -e "${GREEN}[✓] Unknown paths correctly return HTTP 404${NC}"
+elif [[ "$NF_CODE" != "000" ]]; then
+    echo -e "${YELLOW}[!] Unknown path returned HTTP ${NF_CODE} (expected 404)${NC}"
 fi
 
 # ---- Summary ----
@@ -411,15 +454,16 @@ echo -e "${GREEN}║           ✓ Installation Complete              ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  ${BOLD}Domain:${NC}     ${CYAN}${DOMAIN}${NC}"
-echo -e "  ${BOLD}Stub:${NC}       ${CYAN}${STUB_NAMES[$((STUB_CHOICE-1))]}${NC}"
-echo -e "  ${BOLD}URL:${NC}        ${CYAN}https://${DOMAIN}:8443${NC}"
-echo -e "  ${BOLD}HTTP:${NC}       ${CYAN}http://${DOMAIN}${NC} → redirect to HTTPS"
+echo -e "  ${BOLD}Page:${NC}       ${CYAN}Northbound (studio landing, single page)${NC}"
+echo -e "  ${BOLD}Backend:${NC}    ${CYAN}https://127.0.0.1:8443${NC} (local only)"
 echo ""
 echo -e "  ${YELLOW}━━━ Update your Xray / Remnawave node config ━━━${NC}"
 echo ""
 echo -e "    \"target\":      ${GREEN}\"127.0.0.1:8443\"${NC}"
 echo -e "    \"serverNames\": ${GREEN}[\"${DOMAIN}\"]${NC}"
 echo ""
-echo -e "  ${BOLD}Open ports:${NC}  80 (cert + redirect), 443 (Xray)"
-echo -e "  ${BOLD}Internal:${NC}    8443 (Caddy, localhost only)"
+echo -e "  ${BOLD}Open ports:${NC}  80 (cert + redirect), 443 (Xray Reality, public)"
+echo -e "  ${BOLD}Internal:${NC}    8443 (Caddy backend, localhost only)"
+echo ""
+echo -e "  ${DIM}Edit text/brand: /var/www/html/index.html → systemctl restart caddy${NC}"
 echo ""
