@@ -29,17 +29,20 @@ cat "$WORK/summary.txt"
 echo "==> offline validation"
 python3 -m selfsteal validate --webroot "$WORK/site" --domain "$DOMAIN"
 
-echo "==> rewriting config for a local plaintext listener"
+echo "==> rewriting config for a local listener"
 python3 - "$WORK/Caddyfile" "$WORK/Caddyfile.local" "$DOMAIN" "$PORT" <<'PY'
 import re, sys
 src, dst, domain, port = sys.argv[1:5]
 text = open(src, encoding="utf-8").read()
-# Drop the :80 redirect block and bind the site block to a plain local port so
-# the probes exercise the same routes without ACME or TLS in the way.
+# Drop the :80 redirect block, move the site to a free local port and issue a
+# self-signed certificate instead of talking to ACME. The hostname site address
+# is kept on purpose: probes must exercise the same SNI-matched vhost the
+# installer checks in production.
 text = re.sub(rf"^# Public :80.*?^}}\n\n", "", text, flags=re.S | re.M)
-text = text.replace(f"{domain}:8443 {{", f":{port} {{")
+text = text.replace(f"{domain}:8443 {{", f"{domain}:{port} {{")
+text = re.sub(r"\ttls \{\n\t\tissuer acme \{\n.*?\n\t\t\}\n\t\}\n", "\ttls internal\n",
+              text, flags=re.S)
 text = text.replace("\tadmin unix//run/caddy/admin.sock", "\tadmin off")
-text = text.replace("{\n\tadmin off", "{\n\tadmin off\n\tauto_https off")
 open(dst, "w", encoding="utf-8").write(text)
 PY
 
@@ -49,15 +52,16 @@ PY
 echo "==> starting caddy on :$PORT"
 "$CADDY" run --config "$WORK/Caddyfile.local" >"$WORK/caddy.log" 2>&1 &
 CADDY_PID=$!
-for _ in $(seq 1 30); do
-    curl -fsS -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null && break
-    sleep 0.3
+for _ in $(seq 1 40); do
+    curl -fsSk --resolve "$DOMAIN:$PORT:127.0.0.1" \
+        -o /dev/null "https://$DOMAIN:$PORT/" 2>/dev/null && break
+    sleep 0.4
 done
 
 echo "==> live probes"
 cd "$ROOT"
 python3 -m selfsteal validate \
     --webroot "$WORK/site" --domain "$DOMAIN" \
-    --base-url "http://127.0.0.1:$PORT"
+    --base-url "https://$DOMAIN:$PORT" --connect 127.0.0.1
 
 echo "==> all checks passed"

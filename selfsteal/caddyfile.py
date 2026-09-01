@@ -81,6 +81,7 @@ def build(
     http_port: int = 80,
     strip_server: bool = True,
     access_log: bool = False,
+    bind_addr: str = "127.0.0.1",
 ) -> str:
     domain = validate_domain(domain)
     webroot = validate_path(webroot, "webroot")
@@ -116,7 +117,20 @@ def build(
     # ---- :8443 — the site itself ----
     add(f"# Local HTTPS backend. Xray Reality proxies probe traffic here.")
     add(f"{domain}:{https_port} {{")
+    if bind_addr:
+        # Only Xray needs to reach the backend. Binding to loopback makes that
+        # structural rather than a firewall rule that might be absent.
+        add(f"\tbind {bind_addr}")
     add(f"\troot * {webroot}")
+    if bind_addr and bind_addr.startswith("127."):
+        # TLS-ALPN would be attempted on the backend port, which is now
+        # unreachable from outside. Pinning HTTP-01 avoids a pointless retry
+        # cycle on every certificate issuance and renewal.
+        add("\ttls {")
+        add("\t\tissuer acme {")
+        add("\t\t\tdisable_tlsalpn_challenge")
+        add("\t\t}")
+        add("\t}")
     add("\tencode zstd gzip")
     add("")
     add("\theader {")

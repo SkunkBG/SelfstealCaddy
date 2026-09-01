@@ -14,14 +14,16 @@ convincing it looks.
 
 from __future__ import annotations
 
+import http.client
 import json
 import re
+import socket
 import ssl
-import urllib.error
-import urllib.request
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
+from urllib.parse import urlsplit
 
 EXTERNAL_URL_RE = re.compile(
     r"""(?:src|href|action|content)\s*=\s*["'](?:https?:)?//([^/"']+)""",
@@ -173,17 +175,75 @@ class Probe:
     json_body: bool = False
 
 
-def _request(base: str, probe: Probe, timeout: float = 6.0) -> Tuple[int, dict, bytes]:
+class _PinnedConnection(http.client.HTTPSConnection):
+    """Connect to a fixed address while presenting the site's own hostname.
+
+    The backend is a name-based virtual host bound to loopback, so a probe has
+    to dial 127.0.0.1 but still send SNI and Host for the real domain.  The
+    first version of this checker connected straight to the IP; Python omits
+    SNI for an IP literal, Caddy then had no site to match, and every probe
+    died with TLSV1_ALERT_INTERNAL_ERROR while the site itself was fine.
+    """
+
+    def __init__(self, host, port, connect_addr, context, timeout):
+        super().__init__(host, port, context=context, timeout=timeout)
+        self._connect_addr = connect_addr
+
+    def connect(self):
+        self.sock = socket.create_connection(
+            (self._connect_addr, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+
+
+def _connection(base: str, connect_addr: Optional[str], timeout: float):
+    parts = urlsplit(base)
+    host = parts.hostname or "127.0.0.1"
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    if parts.scheme != "https":
+        return http.client.HTTPConnection(connect_addr or host, port, timeout=timeout)
     context = ssl.create_default_context()
+    # The backend certificate is for the public domain and is served over
+    # loopback; verifying it here would test DNS, not the site.
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
-    req = urllib.request.Request(base.rstrip("/") + probe.path, method=probe.method)
-    req.add_header("User-Agent", "Mozilla/5.0 (compatible; site-check/1.0)")
+    if connect_addr:
+        return _PinnedConnection(host, port, connect_addr, context, timeout)
+    return http.client.HTTPSConnection(host, port, context=context, timeout=timeout)
+
+
+def _request(base: str, probe: "Probe", timeout: float = 8.0,
+             connect_addr: Optional[str] = None) -> Tuple[int, dict, bytes]:
+    conn = _connection(base, connect_addr, timeout)
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
-            return resp.status, dict(resp.headers), resp.read()
-    except urllib.error.HTTPError as exc:
-        return exc.code, dict(exc.headers), exc.read()
+        conn.request(probe.method, probe.path, headers={
+            "Host": urlsplit(base).hostname or "localhost",
+            "User-Agent": "Mozilla/5.0 (compatible; site-check/1.0)",
+            "Accept": "*/*",
+            "Connection": "close",
+        })
+        resp = conn.getresponse()
+        return resp.status, dict(resp.getheaders()), resp.read()
+    finally:
+        conn.close()
+
+
+def wait_until_ready(base: str, connect_addr: Optional[str] = None,
+                     timeout: float = 45.0) -> Optional[str]:
+    """Poll until the backend answers, or return why it never did.
+
+    A certificate may still be issuing when the installer reaches this point,
+    so a single early failure is not evidence of a broken site.
+    """
+    deadline = time.monotonic() + timeout
+    last = "no attempt made"
+    while time.monotonic() < deadline:
+        try:
+            _request(base, Probe("/", 200), timeout=5.0, connect_addr=connect_addr)
+            return None
+        except Exception as exc:                       # noqa: BLE001 - reported
+            last = str(exc)
+            time.sleep(2.0)
+    return last
 
 
 def default_probes(endpoints: List[str], pages: List[str]) -> List[Probe]:
@@ -216,11 +276,18 @@ def default_probes(endpoints: List[str], pages: List[str]) -> List[Probe]:
     return probes
 
 
-def check_live(base: str, probes: List[Probe]) -> Report:
+def check_live(base: str, probes: List[Probe],
+               connect_addr: Optional[str] = None) -> Report:
     report = Report()
+    unreachable = wait_until_ready(base, connect_addr)
+    if unreachable is not None:
+        report.checks += 1
+        report.failures.append(
+            f"backend at {base} did not answer within the timeout: {unreachable}")
+        return report
     for probe in probes:
         try:
-            status, headers, body = _request(base, probe)
+            status, headers, body = _request(base, probe, connect_addr=connect_addr)
         except Exception as exc:                      # noqa: BLE001 - reported
             report.failures.append(f"{probe.method} {probe.path}: {exc}")
             report.checks += 1

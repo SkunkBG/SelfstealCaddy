@@ -226,6 +226,18 @@ class TestSecurity(unittest.TestCase):
         errors = config.split("handle_errors {", 1)[1]
         self.assertIn("-Server", errors)
 
+    def test_caddyfile_binds_the_backend_to_loopback(self):
+        _, site, _ = render(theme="storage")
+        config = caddyfile.build(domain=DOMAIN, webroot="/var/www/html",
+                                 endpoints=site.endpoints)
+        self.assertIn("bind 127.0.0.1", config)
+        # TLS-ALPN cannot reach a loopback-bound port, so issuance must not
+        # depend on it.
+        self.assertIn("disable_tlsalpn_challenge", config)
+        wide = caddyfile.build(domain=DOMAIN, webroot="/var/www/html",
+                               endpoints=site.endpoints, bind_addr="")
+        self.assertNotIn("bind ", wide)
+
     def test_caddyfile_does_not_enable_http3_or_admin_tcp(self):
         _, site, _ = render(theme="cdn")
         config = caddyfile.build(domain=DOMAIN, webroot="/var/www/html",
@@ -315,6 +327,33 @@ class TestFilesystem(unittest.TestCase):
                              "a stale page from the previous theme would keep "
                              "serving 200 with another brand's content")
             self.assertTrue((root / "work.html").exists())
+
+    def test_upgrade_from_1x_removes_its_pages(self):
+        """1.x kept no manifest, so its pages would otherwise survive forever."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "site"
+            root.mkdir()
+            (root / ".well-known").mkdir()
+            for name in ("index.html", "style.css", "404.html", "sitemap.xml",
+                         "robots.txt", "studio.html", "work.html",
+                         "contact.html"):
+                (root / name).write_text("1.x content")
+            (root / "operator-note.html").write_text("not ours")
+            generate(domain=DOMAIN, theme="storage", webroot=str(root),
+                     caddyfile_path=str(Path(tmp) / "Caddyfile"), dry_run=True)
+            for name in ("studio.html", "work.html", "contact.html"):
+                self.assertFalse((root / name).exists(), name)
+            self.assertTrue((root / "operator-note.html").exists(),
+                            "files the operator put there must be left alone")
+
+    def test_upgrade_cleanup_needs_a_1x_looking_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "site"
+            root.mkdir()
+            (root / "services.html").write_text("someone else's site")
+            generate(domain=DOMAIN, theme="cdn", webroot=str(root),
+                     caddyfile_path=str(Path(tmp) / "Caddyfile"), dry_run=True)
+            self.assertTrue((root / "services.html").exists())
 
     def test_generated_tree_passes_validation(self):
         with tempfile.TemporaryDirectory() as tmp:

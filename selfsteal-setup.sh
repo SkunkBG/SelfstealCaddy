@@ -13,6 +13,7 @@
 #     HTTPS_PORT=8443   local backend port Reality points at
 #     DEBUG=1           shell trace and full error output
 #     ASSUME_YES=1      never prompt
+#     BIND_ADDR=127.0.0.1  interface the backend listens on ("" = all)
 #     UNINSTALL=1       remove generated files and restore the Caddy config
 #
 #  Requirements: Debian 12/13 or Ubuntu LTS, python3 (stdlib only), root.
@@ -30,6 +31,7 @@ DEBUG="${DEBUG:-0}"
 ASSUME_YES="${ASSUME_YES:-0}"
 UNINSTALL="${UNINSTALL:-0}"
 HTTPS_PORT="${HTTPS_PORT:-8443}"
+BIND_ADDR="${BIND_ADDR:-127.0.0.1}"
 ADMIN_SOCKET="${ADMIN_SOCKET:-/run/caddy/admin.sock}"
 STUB_SEED="${STUB_SEED:-}"
 
@@ -239,7 +241,11 @@ apply_caddy_config() {
         if caddy reload --adapter caddyfile --config "$CADDYFILE" >/dev/null 2>&1; then
             ok "Caddy перезагружен без простоя"
         else
-            warn "reload не удался — выполняю restart"
+            # Expected exactly once, when upgrading from a configuration that
+            # had `admin off`: the *running* process has no admin endpoint to
+            # reload through. Subsequent runs reload cleanly.
+            warn "reload недоступен у запущенного процесса — выполняю restart"
+            warn "(ожидаемо при первом обновлении со старого конфига; далее reload заработает)"
             systemctl restart caddy
         fi
     else
@@ -266,8 +272,12 @@ apply_caddy_config() {
 
 verify_live() {
     log "Проверяю поведение сервиса..."
+    # The backend is a name-based vhost on loopback: the probe has to dial
+    # 127.0.0.1 but present the real hostname, or the TLS handshake has no
+    # site to match and fails before a single request is sent.
     if run_gen validate --webroot "$WEBROOT" --domain "$DOMAIN" \
-            --base-url "https://127.0.0.1:${HTTPS_PORT}"; then
+            --base-url "https://${DOMAIN}:${HTTPS_PORT}" \
+            --connect "${BIND_ADDR:-127.0.0.1}"; then
         ok "Все проверки пройдены"
     else
         warn "Часть проверок не пройдена (см. выше). Сайт при этом отдаётся."
@@ -372,7 +382,8 @@ configure_runtime_dir
 STAGE="$(mktemp)"
 GEN_ARGS=(generate --domain "$DOMAIN" --theme "$STUB_THEME"
           --webroot "$WEBROOT" --caddyfile "$STAGE"
-          --https-port "$HTTPS_PORT" --admin-socket "$ADMIN_SOCKET")
+          --https-port "$HTTPS_PORT" --admin-socket "$ADMIN_SOCKET"
+          --bind "$BIND_ADDR")
 [[ -n "$STUB_SEED" ]] && GEN_ARGS+=(--seed "$STUB_SEED")
 [[ "$DRY_RUN" == "1" ]] && GEN_ARGS+=(--dry-run)
 
@@ -418,8 +429,8 @@ printf '%s║             Установка завершена               �
 printf '%s╚═══════════════════════════════════════════════╝%s\n' "$GREEN" "$NC"
 echo
 printf '  %sДомен:%s   %s%s%s\n' "$BOLD" "$NC" "$CYAN" "$DOMAIN" "$NC"
-printf '  %sБэкенд:%s  %shttps://127.0.0.1:%s%s (только локально)\n' \
-    "$BOLD" "$NC" "$CYAN" "$HTTPS_PORT" "$NC"
+printf '  %sБэкенд:%s  %shttps://%s:%s%s (слушает только %s)\n' \
+    "$BOLD" "$NC" "$CYAN" "$DOMAIN" "$HTTPS_PORT" "$NC" "${BIND_ADDR:-все интерфейсы}"
 echo
 printf '  %s━━━ Конфигурация ноды Xray / Remnawave ━━━%s\n' "$YELLOW" "$NC"
 printf '    "target":      %s"127.0.0.1:%s"%s\n' "$GREEN" "$HTTPS_PORT" "$NC"

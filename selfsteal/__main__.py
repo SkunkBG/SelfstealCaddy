@@ -52,6 +52,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         https_port=args.https_port,
         admin_socket=args.admin_socket,
+        bind_addr=args.bind,
     )
     if args.json:
         print(json.dumps({
@@ -93,7 +94,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
             endpoints = data.get("endpoints", [])
             pages = data.get("pages", [])
         report.merge(validation.check_live(
-            args.base_url, validation.default_probes(endpoints, pages)))
+            args.base_url, validation.default_probes(endpoints, pages),
+            connect_addr=args.connect))
 
     for failure in report.failures:
         print(f"FAIL  {failure}", file=sys.stderr)
@@ -129,6 +131,9 @@ def build_parser() -> argparse.ArgumentParser:
                           "from the domain)")
     gen.add_argument("--https-port", type=int, default=8443)
     gen.add_argument("--admin-socket", default="/run/caddy/admin.sock")
+    gen.add_argument("--bind", default="127.0.0.1",
+                     help="address the backend listens on; empty string binds "
+                          "all interfaces")
     gen.add_argument("--dry-run", action="store_true")
     gen.add_argument("--json", action="store_true")
     gen.set_defaults(func=cmd_generate)
@@ -142,6 +147,10 @@ def build_parser() -> argparse.ArgumentParser:
     val.add_argument("--domain", required=True)
     val.add_argument("--base-url", default=None,
                      help="also run live HTTP probes against this base URL")
+    val.add_argument("--connect", default=None,
+                     help="dial this address instead of resolving the base URL "
+                          "host, while still sending its SNI and Host header "
+                          "(e.g. 127.0.0.1 for a loopback-bound backend)")
     val.set_defaults(func=cmd_validate)
 
     plan = sub.add_parser("plan", help="resolve a profile without writing anything")

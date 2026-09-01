@@ -27,6 +27,17 @@ from .themes.base import Site
 
 MANIFEST_NAME = ".selfsteal-manifest.json"
 
+# Pages emitted by 1.x, which kept no manifest. On upgrade there is nothing to
+# diff against, so a stale page from the previous theme would keep answering
+# 200 with another brand's content while being absent from the new sitemap.
+LEGACY_PAGES = [
+    "studio.html", "work.html", "contact.html",
+    "menu.html", "about.html", "visit.html",
+    "practice.html", "people.html",
+    "services.html", "projects.html",
+]
+LEGACY_MARKERS = ["index.html", "style.css", "404.html", "sitemap.xml"]
+
 
 @dataclass
 class Result:
@@ -97,7 +108,19 @@ def _read_manifest(webroot: Path) -> List[str]:
         data = json.loads(path.read_text("utf-8"))
         return [str(x) for x in data.get("files", [])]
     except (OSError, ValueError):
+        return _legacy_manifest(webroot)
+
+
+def _legacy_manifest(webroot: Path) -> List[str]:
+    """Synthesise a manifest for a 1.x installation being upgraded.
+
+    Only the fixed set of filenames 1.x could produce is considered, and only
+    when the directory actually looks like one of its installs. Anything the
+    operator put there themselves is left alone.
+    """
+    if not all((webroot / name).is_file() for name in LEGACY_MARKERS):
         return []
+    return [name for name in LEGACY_PAGES if (webroot / name).is_file()]
 
 
 def _write_tree(webroot: Path, files: Dict[str, bytes],
@@ -167,6 +190,7 @@ def generate(
     write_caddyfile: bool = True,
     admin_socket: str = "/run/caddy/admin.sock",
     https_port: int = 8443,
+    bind_addr: str = "127.0.0.1",
 ) -> Result:
     """Generate one complete installation.  Pure apart from filesystem writes."""
     domain = caddyfile.validate_domain(domain)
@@ -184,6 +208,7 @@ def generate(
         endpoints=site.endpoints,
         admin_socket=admin_socket,
         https_port=https_port,
+        bind_addr=bind_addr,
     )
     target = Path(caddyfile_path)
     if write_caddyfile:
