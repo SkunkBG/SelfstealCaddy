@@ -9,10 +9,11 @@ Design notes, because several of these are non-obvious:
   probe is precisely the signal this project exists to suppress.  A unix
   socket keeps the listener off the network and restores zero-downtime reload.
 
-* Header directives are repeated inside ``handle_errors``.  They are not
-  inherited: the original config stripped ``Server`` on 200 responses and
-  leaked ``Server: Caddy`` on every 404, so any unknown path identified the
-  backend.
+* Header directives are repeated in every route that can answer a request.
+  They are not inherited: the original config stripped ``Server`` on the
+  backend's 200 responses and leaked ``Server: Caddy`` on every 404 *and* on
+  the public :80 redirect, which is the only Caddy surface reachable from the
+  internet.
 
 * Dotfiles are blocked explicitly.  Caddy's ``file_server``, unlike nginx,
   serves hidden files by default; a stray ``.env`` or ``.git`` in the webroot
@@ -20,6 +21,11 @@ Design notes, because several of these are non-obvious:
 
 * The JSON tree lives under ``/_api`` and is unreachable directly, so
   ``/api/v1/index.json`` 404s the way it would on a real service.
+
+Everything interpolated into the output is validated first.  The values come
+from the operator's environment rather than from the network, but a config
+generator that trusts *any* of its inputs unchecked is one copy-paste away
+from being wrong.
 """
 
 from __future__ import annotations
@@ -33,6 +39,17 @@ DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$"
 )
 PATH_RE = re.compile(r"^/[A-Za-z0-9._/-]*$")
+IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+IPV6_RE = re.compile(r"^[0-9A-Fa-f:]+$")
+
+# A webroot is about to be chowned recursively and served to the internet.
+# These are the paths where getting it wrong is unrecoverable rather than
+# merely wrong: a stray WEBROOT=/etc turns /etc/shadow world-readable.
+FORBIDDEN_WEBROOTS = frozenset({
+    "/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib32", "/lib64",
+    "/media", "/mnt", "/opt", "/proc", "/root", "/run", "/sbin", "/srv",
+    "/sys", "/tmp", "/usr", "/var",
+})
 
 
 class ConfigError(ValueError):
@@ -60,6 +77,59 @@ def validate_path(path: str, label: str) -> str:
     return value.rstrip("/") or "/"
 
 
+def validate_webroot(path: str) -> str:
+    """A webroot must be a directory this tool can own outright.
+
+    The installer chowns it recursively and the generator prunes empty
+    directories inside it, so a system path here is destructive in a way no
+    later check can undo.  Requiring at least two components also rules out
+    the single-segment top-level directories a typo produces.
+    """
+    value = validate_path(path, "webroot")
+    if value in FORBIDDEN_WEBROOTS or value.rstrip("/") in FORBIDDEN_WEBROOTS:
+        raise ConfigError(
+            f"refusing to use {value!r} as a webroot: it is a system directory "
+            f"that would be chowned and pruned recursively"
+        )
+    if len([p for p in value.split("/") if p]) < 2:
+        raise ConfigError(
+            f"refusing to use {value!r} as a webroot: expected a dedicated "
+            f"directory such as /var/www/html, not a top-level one"
+        )
+    return value
+
+
+def validate_socket(path: str) -> str:
+    """The admin socket path is interpolated into the global options block."""
+    return validate_path(path, "admin socket")
+
+
+def validate_bind(addr: str) -> str:
+    """An empty value is meaningful: it means 'do not emit a bind directive'."""
+    value = (addr or "").strip()
+    if not value:
+        return ""
+    if IPV4_RE.match(value):
+        if any(int(part) > 255 for part in value.split(".")):
+            raise ConfigError(f"invalid bind address {addr!r}")
+        return value
+    if ":" in value and IPV6_RE.match(value):
+        return value
+    raise ConfigError(
+        f"invalid bind address {addr!r}: expected an IP literal or an empty string"
+    )
+
+
+def validate_port(port, label: str) -> int:
+    try:
+        value = int(port)
+    except (TypeError, ValueError):
+        raise ConfigError(f"invalid {label} {port!r}: expected an integer") from None
+    if not 1 <= value <= 65535:
+        raise ConfigError(f"invalid {label} {value}: expected 1-65535")
+    return value
+
+
 def _matcher_list(paths: Iterable[str]) -> str:
     return " ".join(sorted(set(paths)))
 
@@ -84,7 +154,13 @@ def build(
     bind_addr: str = "127.0.0.1",
 ) -> str:
     domain = validate_domain(domain)
-    webroot = validate_path(webroot, "webroot")
+    webroot = validate_webroot(webroot)
+    admin_socket = validate_socket(admin_socket)
+    bind_addr = validate_bind(bind_addr)
+    https_port = validate_port(https_port, "https port")
+    http_port = validate_port(http_port, "http port")
+    if https_port == http_port:
+        raise ConfigError("https port and http port must differ")
 
     api_paths = [e.path for e in endpoints]
     has_api = bool(api_paths)
@@ -96,6 +172,14 @@ def build(
     # ---- global options ----
     add("{")
     add(f"\tadmin unix/{admin_socket}")
+    # Caddy installs its own HTTP->HTTPS redirect for every host it serves over
+    # HTTPS, and prepends it ahead of the :80 site block below. That redirect is
+    # a 308 that carries `Server: Caddy` and, because https_port is not 443,
+    # spells the backend port out in Location: `https://domain:8443/`. The whole
+    # point of the block below is that neither of those reaches a prober, so the
+    # automatic one is turned off. Certificate management is untouched -- only
+    # the redirect routes are.
+    add("\tauto_https disable_redirects")
     add(f"\thttp_port {http_port}")
     add(f"\thttps_port {https_port}")
     add("\tservers {")
@@ -107,15 +191,26 @@ def build(
     add("")
 
     # ---- :80 — ACME plus redirect ----
-    add(f"# Public :80 — ACME HTTP-01 challenge and redirect to the public 443.")
+    add("# Public :80 — ACME HTTP-01 challenge and redirect to the public 443.")
+    add("# This is the ONLY Caddy surface reachable from the internet, so it")
+    add("# carries the same identity stripping as the backend: a redirect that")
+    add("# answers `Server: Caddy` identifies the stack to anyone running curl.")
     add(f"# Never emits :{https_port} in Location: the backend port must not leak.")
     add(f"{domain}:{http_port} {{")
+    add("\theader {")
+    if strip_server:
+        add("\t\t-Server")
+    add("\t\t-Alt-Svc")
+    add("\t}")
+    # No handle_errors here on purpose: redir carries no matcher, so every
+    # request to this listener is answered by it and there is no error path to
+    # harden. The backend block below is the one that needs the repetition.
     add(f"\tredir https://{domain}{{uri}} permanent")
     add("}")
     add("")
 
     # ---- :8443 — the site itself ----
-    add(f"# Local HTTPS backend. Xray Reality proxies probe traffic here.")
+    add("# Local HTTPS backend. Xray Reality proxies probe traffic here.")
     add(f"{domain}:{https_port} {{")
     if bind_addr:
         # Only Xray needs to reach the backend. Binding to loopback makes that
@@ -160,7 +255,11 @@ def build(
     add("\t\tfile_server")
     add("\t}")
     add("")
-    add("\t@dotfiles path /.* /*/.* /*/*/.*")
+    # A path matcher's * does not cross slashes, so the old
+    # `path /.* /*/.* /*/*/.*` list only covered three levels: a file at
+    # /a/b/c/.env was served with a 200. path_regexp has no depth limit --
+    # anything with a dot-segment anywhere in the path is refused.
+    add("\t@dotfiles path_regexp /\\.")
     add("\thandle @dotfiles {")
     add("\t\terror 404")
     add("\t}")

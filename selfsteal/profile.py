@@ -9,6 +9,7 @@ different sites, and a re-run would change the node's public identity.
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -100,6 +101,16 @@ class Profile:
     def api_base(self) -> str:
         return f"https://{self.domain}/api/{self.api_version}"
 
+    @property
+    def seed_id(self) -> str:
+        """Non-reversible fingerprint of the seed.
+
+        Enough to confirm that two nodes were built from different seeds, or
+        that a re-run reused the same one, without printing or persisting the
+        secret that makes the node's appearance unpredictable.
+        """
+        return hashlib.sha256(self.seed.encode("utf-8")).hexdigest()[:12]
+
     def to_dict(self) -> Dict[str, Any]:
         payload = {
             "schema": self.schema,
@@ -127,8 +138,18 @@ class Profile:
         }
         return payload
 
+    def to_public_dict(self) -> Dict[str, Any]:
+        """``to_dict`` without the seed, for anything written to the webroot."""
+        payload = self.to_dict()
+        payload.pop("seed", None)
+        payload["seed_id"] = self.seed_id
+        return payload
+
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2, sort_keys=False) + "\n"
+
+    def to_public_json(self) -> str:
+        return json.dumps(self.to_public_dict(), indent=2, sort_keys=False) + "\n"
 
 
 def _pick_release(rng: SeededRandom, year: int) -> Tuple[str, str, str]:

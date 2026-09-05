@@ -170,9 +170,11 @@ def _resolves(webroot: Path, url: str) -> bool:
 class Probe:
     path: str
     status: int
-    content_type: Optional[str] = None
+    content_type: Optional[object] = None   # str, or a tuple of acceptable values
     method: str = "GET"
     json_body: bool = False
+    location_prefix: Optional[str] = None
+    location_excludes: Optional[str] = None
 
 
 class _PinnedConnection(http.client.HTTPSConnection):
@@ -222,7 +224,11 @@ def _request(base: str, probe: "Probe", timeout: float = 8.0,
             "Connection": "close",
         })
         resp = conn.getresponse()
-        return resp.status, dict(resp.getheaders()), resp.read()
+        # Lower-cased keys: HTTP header names are case-insensitive, and a check
+        # for "Server" that a different capitalisation slips past is worse than
+        # no check at all.
+        headers = {k.lower(): v for k, v in resp.getheaders()}
+        return resp.status, headers, resp.read()
     finally:
         conn.close()
 
@@ -252,7 +258,7 @@ def default_probes(endpoints: List[str], pages: List[str]) -> List[Probe]:
     probes += [Probe(e, 200, "application/json", json_body=True) for e in endpoints]
     probes += [
         Probe("/robots.txt", 200, "text/plain"),
-        Probe("/sitemap.xml", 200, "text/xml"),
+        Probe("/sitemap.xml", 200, ("application/xml", "text/xml")),
         Probe("/.well-known/security.txt", 200, "text/plain"),
         Probe("/favicon.ico", 200),
         Probe("/favicon.svg", 200, "image/svg+xml"),
@@ -276,6 +282,26 @@ def default_probes(endpoints: List[str], pages: List[str]) -> List[Probe]:
     return probes
 
 
+def public_http_probes(domain: str, https_port: int = 8443) -> List[Probe]:
+    """Probes for the :80 listener — the only Caddy surface facing the internet.
+
+    It used to be checked by nobody.  The backend strips ``Server`` and
+    ``Alt-Svc``; the redirect in front of it did not, so a single unauthenticated
+    ``curl http://domain/`` identified the stack that everything behind it goes
+    to some trouble to hide.  The Location assertions cover the other half of
+    the contract: the redirect must reach the public 443 and must never disclose
+    the backend port.
+    """
+    redirect_to = f"https://{domain}"
+    return [
+        Probe("/", 301, location_prefix=redirect_to,
+              location_excludes=f":{https_port}"),
+        Probe("/does-not-exist-8f2c", 301, location_prefix=redirect_to,
+              location_excludes=f":{https_port}"),
+        Probe("/.env", 301, location_prefix=redirect_to),
+    ]
+
+
 def check_live(base: str, probes: List[Probe],
                connect_addr: Optional[str] = None) -> Report:
     report = Report()
@@ -296,15 +322,30 @@ def check_live(base: str, probes: List[Probe],
                      f"{probe.method} {probe.path}: expected {probe.status}, "
                      f"got {status}")
         if probe.content_type:
-            actual = headers.get("Content-Type", "")
-            report.check(probe.content_type in actual,
+            actual = headers.get("content-type", "")
+            # A tuple means "any of these is correct". Caddy serves sitemap.xml
+            # as application/xml; older versions said text/xml. Both are right,
+            # and a checker that insists on one of them fails every real install
+            # the day the server changes its mind.
+            wanted = (probe.content_type if isinstance(probe.content_type, tuple)
+                      else (probe.content_type,))
+            report.check(any(candidate in actual for candidate in wanted),
                          f"{probe.method} {probe.path}: expected Content-Type "
-                         f"{probe.content_type}, got {actual!r}")
-        report.check("Server" not in headers,
+                         f"{' or '.join(wanted)}, got {actual!r}")
+        report.check("server" not in headers,
                      f"{probe.method} {probe.path}: Server header present "
-                     f"({headers.get('Server')!r}) — backend is identifiable")
-        report.check("Alt-Svc" not in headers,
+                     f"({headers.get('server')!r}) — backend is identifiable")
+        report.check("alt-svc" not in headers,
                      f"{probe.method} {probe.path}: Alt-Svc advertised")
+        location = headers.get("location", "")
+        if probe.location_prefix:
+            report.check(location.startswith(probe.location_prefix),
+                         f"{probe.method} {probe.path}: expected Location under "
+                         f"{probe.location_prefix}, got {location!r}")
+        if probe.location_excludes:
+            report.check(probe.location_excludes not in location,
+                         f"{probe.method} {probe.path}: Location leaks "
+                         f"{probe.location_excludes!r} ({location!r})")
         if probe.json_body and probe.method != "HEAD" and body:
             try:
                 json.loads(body.decode("utf-8"))

@@ -10,11 +10,18 @@
 #
 #  New, all optional:
 #     STUB_SEED=...     pin or rotate the installation identity
+#     SEED_FILE=...     where the node's secret seed lives (0600, root)
 #     HTTPS_PORT=8443   local backend port Reality points at
 #     DEBUG=1           shell trace and full error output
 #     ASSUME_YES=1      never prompt
 #     BIND_ADDR=127.0.0.1  interface the backend listens on ("" = all)
 #     UNINSTALL=1       remove generated files and restore the Caddy config
+#     FORCE=1           apply the config even if validation failed
+#     ALLOW_IP_LOOKUP=1 permit one outbound request to discover the public IP
+#
+#  Identity: on first run a random seed is generated and stored in SEED_FILE.
+#  Every later run reuses it, so reinstalls stay byte-identical while the site
+#  cannot be predicted from the domain by anyone holding a copy of this tool.
 #
 #  Requirements: Debian 12/13 or Ubuntu LTS, python3 (stdlib only), root.
 # =============================================================================
@@ -34,6 +41,12 @@ HTTPS_PORT="${HTTPS_PORT:-8443}"
 BIND_ADDR="${BIND_ADDR:-127.0.0.1}"
 ADMIN_SOCKET="${ADMIN_SOCKET:-/run/caddy/admin.sock}"
 STUB_SEED="${STUB_SEED:-}"
+SEED_FILE="${SEED_FILE:-/etc/selfsteal/seed}"
+FORCE="${FORCE:-0}"
+ALLOW_IP_LOOKUP="${ALLOW_IP_LOOKUP:-0}"
+
+DEFAULT_WEBROOT="/var/www/html"
+DEFAULT_CADDYFILE="/etc/caddy/Caddyfile"
 
 [[ "$DEBUG" == "1" ]] && set -x
 
@@ -144,7 +157,7 @@ install_caddy() {
     apt-get install -y --no-install-recommends \
         debian-keyring debian-archive-keyring apt-transport-https ca-certificates >/dev/null
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-        | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+        | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
         > /etc/apt/sources.list.d/caddy-stable.list
     apt-get update -qq
@@ -178,10 +191,15 @@ RuntimeDirectoryMode=0750
 resolve_server_ip() {
     # Prefer the local routing table over a third-party echo service: one fewer
     # outbound request from the node, and no dependency on someone else's API.
+    # The echo service is opt-in rather than a silent fallback -- a VPN node
+    # quietly announcing itself to a third party during setup is exactly the
+    # kind of correlation this project exists to avoid.
     local ip
     ip="$(ip -4 route get 1.1.1.1 2>/dev/null \
           | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)"
-    [[ -n "$ip" ]] || ip="$(curl -s4 --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+    if [[ -z "$ip" && "$ALLOW_IP_LOOKUP" == "1" ]]; then
+        ip="$(curl -fs4 --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+    fi
     printf '%s' "${ip:-unknown}"
 }
 
@@ -209,6 +227,75 @@ check_dns() {
     warn "${DOMAIN} → ${a_records//$'\n'/, }, IP сервера ${server_ip}"
     warn "Если домен за CDN — это ожидаемо. Иначе ACME не выпустит сертификат."
     ask "Продолжить?" || die "прервано пользователем"
+}
+
+# ---------------------------------------------------------------------------
+#  Input validation and node identity
+# ---------------------------------------------------------------------------
+validate_inputs() {
+    # Runs before apt, DNS or systemd are touched, so a bad WEBROOT fails on a
+    # box that is still exactly as it was found. The rules live in the Python
+    # side only: duplicating them here is how the two drift apart.
+    run_gen paths --domain "$DOMAIN" --webroot "$WEBROOT" \
+        --caddyfile "$CADDYFILE" --admin-socket "$ADMIN_SOCKET" \
+        --bind "$BIND_ADDR" --https-port "$HTTPS_PORT" \
+        || die "проверка параметров не пройдена (см. выше)"
+}
+
+guard_dry_run_paths() {
+    # DRY_RUN generates a real site so it can be inspected and validated. That
+    # is only safe on paths the operator chose: on the defaults it silently
+    # replaced the live Caddyfile -- without a backup, because the backup is
+    # taken by apply_caddy_config, which DRY_RUN skips.
+    [[ "$DRY_RUN" == "1" ]] || return 0
+    local clash=0
+    [[ "$WEBROOT" == "$DEFAULT_WEBROOT" ]] && clash=1
+    [[ "$CADDYFILE" == "$DEFAULT_CADDYFILE" ]] && clash=1
+    [[ "$clash" == "1" ]] || return 0
+    die "DRY_RUN записывает сгенерированный сайт и конфиг по указанным путям.
+    Задайте отдельные, чтобы не тронуть рабочую установку:
+      DRY_RUN=1 DOMAIN=${DOMAIN} WEBROOT=/tmp/site CADDYFILE=/tmp/Caddyfile \\
+          bash $0"
+}
+
+resolve_seed() {
+    # The seed decides the entire appearance of the node. Deriving it from the
+    # domain -- the old default -- makes a fleet trivially enumerable: anyone
+    # with a domain list and a copy of this repository can regenerate the
+    # expected favicon.ico and match it byte for byte. A random per-node seed,
+    # kept outside the webroot and reused on every later run, keeps reinstalls
+    # idempotent while removing that oracle.
+    local seed_dir
+    if [[ -n "$STUB_SEED" ]]; then
+        SELFSTEAL_SEED="$STUB_SEED"
+    elif [[ -r "$SEED_FILE" ]]; then
+        SELFSTEAL_SEED="$(<"$SEED_FILE")"
+        # An empty seed file would silently fall through to the domain-derived
+        # default and change the node's identity without saying so.
+        [[ -n "$SELFSTEAL_SEED" ]] || die "${SEED_FILE} пуст.
+    Восстановите его из бэкапа или задайте STUB_SEED — иначе сайт ноды
+    сменится целиком."
+    elif [[ "$DRY_RUN" == "1" ]]; then
+        SELFSTEAL_SEED=""
+        warn "Seed ещё не создан: предпросмотр использует seed, производный от домена."
+        warn "Реальная установка сгенерирует случайный seed, и сайт будет другим."
+    else
+        SELFSTEAL_SEED="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
+        [[ ${#SELFSTEAL_SEED} -ge 32 ]] || die "не удалось получить случайный seed"
+        seed_dir="$(dirname "$SEED_FILE")"
+        # Only ever change the mode of a directory we create ourselves: with
+        # SEED_FILE=/etc/seed, an unconditional `install -d -m 0700` would make
+        # /etc root-only and take the box down with it.
+        if [[ ! -d "$seed_dir" ]]; then
+            mkdir -p "$seed_dir"
+            chmod 0700 "$seed_dir"
+        fi
+        ( umask 077; printf '%s\n' "$SELFSTEAL_SEED" > "$SEED_FILE" )
+        ok "Создан уникальный seed ноды (${SEED_FILE}, 0600)"
+    fi
+    # Passed through the environment, never argv: --seed would be visible in
+    # ps to every local user and in the shell trace under DEBUG=1.
+    export SELFSTEAL_SEED
 }
 
 # ---------------------------------------------------------------------------
@@ -275,8 +362,12 @@ verify_live() {
     # The backend is a name-based vhost on loopback: the probe has to dial
     # 127.0.0.1 but present the real hostname, or the TLS handshake has no
     # site to match and fails before a single request is sent.
+    # The :80 listener is checked too: it is the only Caddy surface reachable
+    # from the internet, and until now nothing verified that it strips the
+    # backend's identity or keeps the backend port out of Location.
     if run_gen validate --webroot "$WEBROOT" --domain "$DOMAIN" \
             --base-url "https://${DOMAIN}:${HTTPS_PORT}" \
+            --http-url "http://${DOMAIN}:80" \
             --connect "${BIND_ADDR:-127.0.0.1}"; then
         ok "Все проверки пройдены"
     else
@@ -317,6 +408,13 @@ PY
     fi
     rm -f /etc/systemd/system/caddy.service.d/10-selfsteal-runtime.conf
     systemctl daemon-reload 2>/dev/null || true
+    # The seed is a secret belonging to this installation; removing the
+    # installation removes it. A later reinstall mints a new identity.
+    if [[ -f "$SEED_FILE" ]]; then
+        rm -f "$SEED_FILE"
+        rmdir "$(dirname "$SEED_FILE")" 2>/dev/null || true
+        ok "Seed ноды удалён (${SEED_FILE})"
+    fi
     ok "Готово"
     exit 0
 }
@@ -369,6 +467,9 @@ DOMAIN="$(tr -d '[:space:]' <<<"${DOMAIN,,}")"
 DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN%%/*}"
 [[ -n "$DOMAIN" ]] || die "Домен не может быть пустым"
 
+guard_dry_run_paths
+validate_inputs
+
 if [[ -z "${STUB_THEME:-}" ]]; then
     if [[ -t 0 ]]; then choose_theme_interactive; else STUB_THEME=random; fi
 fi
@@ -377,15 +478,17 @@ install_deps
 check_dns
 install_caddy
 configure_runtime_dir
+resolve_seed
 
 # Generate into a staging Caddyfile: a bad config can never replace a good one.
 STAGE="$(mktemp)"
+# The seed travels in SELFSTEAL_SEED, exported by resolve_seed. Under DRY_RUN
+# the site is generated for real into the operator's preview paths -- that is
+# what makes it inspectable and validatable -- and no system change follows.
 GEN_ARGS=(generate --domain "$DOMAIN" --theme "$STUB_THEME"
           --webroot "$WEBROOT" --caddyfile "$STAGE"
           --https-port "$HTTPS_PORT" --admin-socket "$ADMIN_SOCKET"
           --bind "$BIND_ADDR")
-[[ -n "$STUB_SEED" ]] && GEN_ARGS+=(--seed "$STUB_SEED")
-[[ "$DRY_RUN" == "1" ]] && GEN_ARGS+=(--dry-run)
 
 log "Генерирую сервис..."
 SUMMARY="$(run_gen "${GEN_ARGS[@]}")" || die "генерация не удалась"
@@ -394,21 +497,34 @@ printf '%s\n' "$SUMMARY" \
     | sed -e "s#^Caddyfile:.*#Caddyfile:   ${CADDYFILE}#" -e 's/^/  /' 
 echo
 
+# These checks are the ones that matter: they catch an infrastructure marker,
+# a credential-shaped string or an external resource in the content that is
+# about to be served. Any of those burns the node, so a failure here stops the
+# install instead of scrolling past as a warning.
 log "Проверяю сгенерированное дерево..."
-run_gen validate --webroot "$WEBROOT" --domain "$DOMAIN" \
-    || warn "офлайн-валидация нашла замечания (см. выше)"
+if ! run_gen validate --webroot "$WEBROOT" --domain "$DOMAIN"; then
+    if [[ "$FORCE" == "1" ]]; then
+        warn "офлайн-валидация не пройдена, но задан FORCE=1 — продолжаю"
+    else
+        die "Офлайн-валидация не пройдена. Конфигурация НЕ применена.
+    Эти проверки ловят утечку маркеров, секретов и внешних ресурсов в
+    отдаваемый контент. Обойти осознанно: FORCE=1."
+    fi
+fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
     install -m 0644 "$STAGE" "$CADDYFILE"
-    ok "DRY_RUN: файлы в ${WEBROOT}, конфиг в ${CADDYFILE}. Система не изменена."
+    ok "DRY_RUN: сайт в ${WEBROOT}, конфиг в ${CADDYFILE}."
+    ok "Ни apt, ни firewall, ни systemd, ни Caddy, ни ${SEED_FILE} не тронуты."
     exit 0
 fi
 
+# The generator sets the mode of every file and directory it creates (0644 /
+# 0755, and 0600 for the manifest and profile), so there is no recursive chmod
+# sweep here: a sweep applies to whatever happens to be under WEBROOT, which is
+# the wrong scope for a tool that otherwise touches only what it wrote.
 chown -R root:root "$WEBROOT"
-find "$WEBROOT" -type d -exec chmod 755 {} + 2>/dev/null || true
-find "$WEBROOT" -type f -exec chmod 644 {} + 2>/dev/null || true
-chmod 600 "$WEBROOT/.selfsteal-manifest.json" \
-          "$WEBROOT/.selfsteal-profile.json" 2>/dev/null || true
+chmod 755 "$WEBROOT"
 
 apply_caddy_config "$STAGE"
 

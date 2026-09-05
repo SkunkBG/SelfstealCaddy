@@ -3,7 +3,7 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
-CADDY="${CADDY:-./caddy-bin}"
+CADDY="${CADDY:-$(command -v caddy || echo ./caddy)}"
 PORT="${PORT:-8300}"
 FAIL=0
 THEMES="${*:-$(python3 -m selfsteal themes --json | python3 -c 'import json,sys; print(" ".join(sorted(json.load(sys.stdin))))')}"
@@ -19,5 +19,6 @@ for theme in $THEMES; do
         FAIL=1
     fi
     PORT=$((PORT + 1))
+    export HTTP_PORT=$((PORT + 400))
 done
 exit "$FAIL"

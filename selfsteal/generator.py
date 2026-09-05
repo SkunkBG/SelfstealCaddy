@@ -1,11 +1,18 @@
 """Generation orchestrator.
 
-Writing strategy: the tree is built in a sibling temporary directory and moved
-into place, and files no longer produced are removed.  The original installer
-wrote in place and never cleaned up, so switching a node from ``coffee`` to
-``studio`` left ``menu.html`` serving 200 with the previous brand's content
-while the sitemap claimed it did not exist.  An internally inconsistent site is
-a worse decoy than a plain one.
+Writing strategy: every file is written to a hidden sibling and atomically
+renamed into place, so a reader never sees a half-written page.  The temporary
+name starts with a dot because the Caddyfile 404s dotfiles: if the process is
+killed mid-write, the leftover is invisible to the internet rather than being
+served as a stray copy of the page.  Files no longer produced are removed --
+the original installer wrote in place and never cleaned up, so switching a node
+from ``coffee`` to ``studio`` left ``menu.html`` serving 200 with the previous
+brand's content while the sitemap claimed it did not exist.  An internally
+inconsistent site is a worse decoy than a plain one.
+
+``dry_run`` resolves the whole installation and returns the plan without
+touching the filesystem at all.  It used to write everything anyway, which made
+``DRY_RUN=1`` on default paths silently replace a live Caddyfile and webroot.
 """
 
 from __future__ import annotations
@@ -13,11 +20,9 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
-import shutil
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 from . import assets, caddyfile, favicon
 from .css import build_stylesheet
@@ -26,6 +31,8 @@ from .registry import build_site, prepare
 from .themes.base import Site
 
 MANIFEST_NAME = ".selfsteal-manifest.json"
+PROFILE_NAME = ".selfsteal-profile.json"
+TMP_SUFFIX = ".selfsteal-tmp"
 
 # Pages emitted by 1.x, which kept no manifest. On upgrade there is nothing to
 # diff against, so a stale page from the previous theme would keep answering
@@ -48,6 +55,7 @@ class Result:
     caddyfile_text: str
     files_written: List[str]
     files_removed: List[str]
+    dry_run: bool = False
 
 
 def _render_files(site: Site) -> Dict[str, bytes]:
@@ -123,25 +131,47 @@ def _legacy_manifest(webroot: Path) -> List[str]:
     return [name for name in LEGACY_PAGES if (webroot / name).is_file()]
 
 
-def _write_tree(webroot: Path, files: Dict[str, bytes],
-                dry_run: bool) -> tuple:
+def _sweep_temp_files(webroot: Path) -> None:
+    """Remove leftovers from a run that was killed between write and rename."""
+    if not webroot.is_dir():
+        return
+    for path in webroot.rglob("*" + TMP_SUFFIX):
+        try:
+            if path.is_file():
+                path.unlink()
+        except OSError:
+            pass
+
+
+def _plan(webroot: Path, files: Dict[str, bytes]) -> Tuple[List[str], List[str]]:
+    previous = set(_read_manifest(webroot))
+    current = set(files)
+    removable = sorted(
+        name for name in previous - current if (webroot / name).is_file()
+    )
+    return sorted(current), removable
+
+
+def _write_tree(webroot: Path, files: Dict[str, bytes]) -> Tuple[List[str], List[str]]:
     previous = set(_read_manifest(webroot))
     current = set(files)
 
-    if dry_run:
-        webroot.mkdir(parents=True, exist_ok=True)
+    _sweep_temp_files(webroot)
 
     written: List[str] = []
     for name in sorted(files):
         target = webroot / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(target.name + ".tmp")
+        _make_dirs(webroot, target.parent)
+        # Hidden temporary name: the Caddyfile 404s dotfiles, so an interrupted
+        # run cannot leave a servable copy of a page behind.
+        tmp = target.with_name("." + target.name + TMP_SUFFIX)
         tmp.write_bytes(files[name])
+        os.chmod(tmp, 0o644)
         os.replace(tmp, target)
-        os.chmod(target, 0o644)
         written.append(name)
 
     removed: List[str] = []
+    touched: Set[Path] = set()
     for name in sorted(previous - current):
         stale = webroot / name
         # Only ever remove paths this tool previously wrote, recorded in the
@@ -150,33 +180,58 @@ def _write_tree(webroot: Path, files: Dict[str, bytes],
             if stale.is_file():
                 stale.unlink()
                 removed.append(name)
+                touched.add(stale.parent)
         except OSError:
             pass
-    _prune_empty_dirs(webroot)
+    _prune_emptied_dirs(webroot, touched)
 
     manifest = {
         "files": sorted(current),
         "schema": 1,
     }
-    (webroot / MANIFEST_NAME).write_text(
-        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-    )
-    os.chmod(webroot / MANIFEST_NAME, 0o600)
+    _write_private(webroot / MANIFEST_NAME,
+                    json.dumps(manifest, indent=2) + "\n")
     return written, removed
 
 
-def _prune_empty_dirs(root: Path) -> None:
-    for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
-        if path.is_dir():
+def _make_dirs(webroot: Path, directory: Path) -> None:
+    """Create directories with an explicit mode rather than inheriting umask."""
+    if directory == webroot or webroot not in directory.parents:
+        directory.mkdir(parents=True, exist_ok=True)
+        return
+    _make_dirs(webroot, directory.parent)
+    if not directory.is_dir():
+        directory.mkdir(exist_ok=True)
+    os.chmod(directory, 0o755)
+
+
+def _write_private(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+    os.chmod(path, 0o600)
+
+
+def _prune_emptied_dirs(webroot: Path, touched: Set[Path]) -> None:
+    """Remove directories emptied by *our own* deletions, and only those.
+
+    The previous implementation walked the whole webroot and removed every
+    empty directory it found, including ones the operator had created.  That
+    contradicted the guarantee the manifest exists to provide.
+    """
+    for directory in sorted(touched, key=lambda p: len(p.parts), reverse=True):
+        current = directory
+        while current != webroot and webroot in current.parents:
             try:
-                next(path.iterdir())
+                next(current.iterdir())
+                break
             except StopIteration:
-                try:
-                    path.rmdir()
-                except OSError:
-                    pass
-            except OSError:
                 pass
+            except OSError:
+                break
+            try:
+                current.rmdir()
+            except OSError:
+                break
+            current = current.parent
 
 
 def generate(
@@ -192,15 +247,19 @@ def generate(
     https_port: int = 8443,
     bind_addr: str = "127.0.0.1",
 ) -> Result:
-    """Generate one complete installation.  Pure apart from filesystem writes."""
+    """Generate one complete installation.
+
+    With ``dry_run`` the function is pure: it resolves the profile, renders
+    every byte and reports what *would* change, without creating, modifying or
+    deleting anything.
+    """
     domain = caddyfile.validate_domain(domain)
-    root = Path(caddyfile.validate_path(webroot, "webroot"))
+    root = Path(caddyfile.validate_webroot(webroot))
 
     spec, profile = prepare(domain, theme, seed=seed)
     site = build_site(spec, profile)
 
     files = _render_files(site)
-    written, removed = _write_tree(root, files, dry_run)
 
     config = caddyfile.build(
         domain=domain,
@@ -211,15 +270,34 @@ def generate(
         bind_addr=bind_addr,
     )
     target = Path(caddyfile_path)
+
+    if dry_run:
+        written, removed = _plan(root, files)
+        return Result(
+            profile=profile,
+            site=site,
+            webroot=root,
+            caddyfile_path=target,
+            caddyfile_text=config,
+            files_written=written,
+            files_removed=removed,
+            dry_run=True,
+        )
+
+    written, removed = _write_tree(root, files)
+
     if write_caddyfile:
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(target.name + ".selfsteal.tmp")
+        tmp = target.with_name("." + target.name + TMP_SUFFIX)
         tmp.write_text(config, encoding="utf-8")
+        os.chmod(tmp, 0o644)
         os.replace(tmp, target)
 
-    profile_path = root / MANIFEST_NAME
-    (root / ".selfsteal-profile.json").write_text(profile.to_json(), encoding="utf-8")
-    os.chmod(root / ".selfsteal-profile.json", 0o600)
+    # The profile records the resolved identity for later inspection. It stays
+    # 0600 and, unlike the manifest, never contains the seed: the seed is the
+    # secret that makes a node's appearance unpredictable, and the webroot is
+    # the one directory on the box that is definitionally served to strangers.
+    _write_private(root / PROFILE_NAME, profile.to_public_json())
 
     return Result(
         profile=profile,
@@ -229,4 +307,5 @@ def generate(
         caddyfile_text=config,
         files_written=written,
         files_removed=removed,
+        dry_run=False,
     )

@@ -220,6 +220,14 @@ class TestSecurity(unittest.TestCase):
                                  endpoints=site.endpoints)
         self.assertIn("@dotfiles", config)
         self.assertIn("@internal", config)
+        # A path matcher's * does not cross slashes, so the old
+        # `path /.* /*/.* /*/*/.*` list stopped at three levels and served
+        # /a/b/c/.env with a 200. Verified against Caddy 2.11.
+        self.assertIn("@dotfiles path_regexp", config)
+        self.assertNotIn("@dotfiles path /", config)
+        # .well-known has to be handled before the dotfile refusal, or
+        # security.txt and the ACME challenge would 404 with it.
+        self.assertLess(config.index("@wellknown"), config.index("@dotfiles"))
         self.assertIn("-Server", config)
         # The header block must be repeated inside handle_errors, or the
         # backend identifies itself on every 404.
@@ -319,10 +327,10 @@ class TestFilesystem(unittest.TestCase):
             root = Path(tmp) / "site"
             config = Path(tmp) / "Caddyfile"
             generate(domain="a.example.com", theme="coffee", webroot=str(root),
-                     caddyfile_path=str(config), dry_run=True)
+                     caddyfile_path=str(config))
             self.assertTrue((root / "menu.html").exists())
             generate(domain="a.example.com", theme="studio", webroot=str(root),
-                     caddyfile_path=str(config), dry_run=True)
+                     caddyfile_path=str(config))
             self.assertFalse((root / "menu.html").exists(),
                              "a stale page from the previous theme would keep "
                              "serving 200 with another brand's content")
@@ -340,7 +348,7 @@ class TestFilesystem(unittest.TestCase):
                 (root / name).write_text("1.x content")
             (root / "operator-note.html").write_text("not ours")
             generate(domain=DOMAIN, theme="storage", webroot=str(root),
-                     caddyfile_path=str(Path(tmp) / "Caddyfile"), dry_run=True)
+                     caddyfile_path=str(Path(tmp) / "Caddyfile"))
             for name in ("studio.html", "work.html", "contact.html"):
                 self.assertFalse((root / name).exists(), name)
             self.assertTrue((root / "operator-note.html").exists(),
@@ -352,7 +360,7 @@ class TestFilesystem(unittest.TestCase):
             root.mkdir()
             (root / "services.html").write_text("someone else's site")
             generate(domain=DOMAIN, theme="cdn", webroot=str(root),
-                     caddyfile_path=str(Path(tmp) / "Caddyfile"), dry_run=True)
+                     caddyfile_path=str(Path(tmp) / "Caddyfile"))
             self.assertTrue((root / "services.html").exists())
 
     def test_generated_tree_passes_validation(self):
@@ -362,7 +370,7 @@ class TestFilesystem(unittest.TestCase):
             for theme in ALL_THEMES:
                 with self.subTest(theme=theme):
                     generate(domain=DOMAIN, theme=theme, webroot=str(root),
-                             caddyfile_path=str(config), dry_run=True)
+                             caddyfile_path=str(config))
                     report = validate.check_tree(root, DOMAIN)
                     self.assertTrue(report.ok(), "\n".join(report.failures))
 
@@ -371,16 +379,219 @@ class TestFilesystem(unittest.TestCase):
             root = Path(tmp) / "site"
             config = Path(tmp) / "Caddyfile"
             generate(domain=DOMAIN, theme="platform", webroot=str(root),
-                     caddyfile_path=str(config), dry_run=True)
+                     caddyfile_path=str(config))
             before = {p.relative_to(root).as_posix(): p.read_bytes()
                       for p in root.rglob("*") if p.is_file()
                       and "security.txt" not in p.name}
             generate(domain=DOMAIN, theme="platform", webroot=str(root),
-                     caddyfile_path=str(config), dry_run=True)
+                     caddyfile_path=str(config))
             after = {p.relative_to(root).as_posix(): p.read_bytes()
                      for p in root.rglob("*") if p.is_file()
                      and "security.txt" not in p.name}
             self.assertEqual(before, after)
+
+
+class TestDryRun(unittest.TestCase):
+    """``--dry-run`` used to write the entire tree and the Caddyfile anyway.
+
+    On default paths that silently replaced a live installation, and without a
+    backup: the backup is taken by the apply step, which a dry run skips.
+    """
+
+    def test_dry_run_touches_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "site"
+            config = Path(tmp) / "Caddyfile"
+            generate(domain=DOMAIN, theme="cdn", webroot=str(root),
+                     caddyfile_path=str(config), dry_run=True)
+            self.assertFalse(root.exists(), "dry run created the webroot")
+            self.assertFalse(config.exists(), "dry run wrote the Caddyfile")
+
+    def test_dry_run_does_not_disturb_an_existing_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "site"
+            config = Path(tmp) / "Caddyfile"
+            generate(domain=DOMAIN, theme="coffee", webroot=str(root),
+                     caddyfile_path=str(config))
+            before = {p.relative_to(root).as_posix(): p.read_bytes()
+                      for p in root.rglob("*") if p.is_file()}
+            config_before = config.read_bytes()
+            generate(domain=DOMAIN, theme="cdn", webroot=str(root),
+                     caddyfile_path=str(config), dry_run=True)
+            after = {p.relative_to(root).as_posix(): p.read_bytes()
+                     for p in root.rglob("*") if p.is_file()}
+            self.assertEqual(before, after)
+            self.assertEqual(config_before, config.read_bytes())
+
+    def test_dry_run_still_reports_the_real_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "site"
+            config = Path(tmp) / "Caddyfile"
+            generate(domain=DOMAIN, theme="coffee", webroot=str(root),
+                     caddyfile_path=str(config))
+            plan = generate(domain=DOMAIN, theme="studio", webroot=str(root),
+                            caddyfile_path=str(config), dry_run=True)
+            self.assertTrue(plan.dry_run)
+            self.assertIn("index.html", plan.files_written)
+            self.assertIn("menu.html", plan.files_removed,
+                          "the plan must name the stale pages it would delete")
+            self.assertTrue((root / "menu.html").exists(),
+                            "planning to remove a file is not removing it")
+
+
+class TestWebrootGuard(unittest.TestCase):
+    """The webroot is chowned recursively and pruned, so a system path here is
+    destructive in a way no later check can undo."""
+
+    def test_system_directories_are_refused(self):
+        for bad in ("/", "/etc", "/usr", "/var", "/home", "/root", "/boot"):
+            with self.subTest(webroot=bad):
+                with self.assertRaises(caddyfile.ConfigError):
+                    caddyfile.validate_webroot(bad)
+
+    def test_top_level_directories_are_refused(self):
+        with self.assertRaises(caddyfile.ConfigError):
+            caddyfile.validate_webroot("/srv2")
+
+    def test_a_real_webroot_is_accepted(self):
+        self.assertEqual(caddyfile.validate_webroot("/var/www/html/"),
+                         "/var/www/html")
+
+    def test_generate_refuses_a_system_webroot(self):
+        with self.assertRaises(caddyfile.ConfigError):
+            generate(domain=DOMAIN, theme="cdn", webroot="/etc",
+                     caddyfile_path="/tmp/ignored", dry_run=True)
+
+
+class TestConfigInputValidation(unittest.TestCase):
+    """Domain and webroot were validated; everything else was interpolated raw."""
+
+    def test_admin_socket_cannot_inject_directives(self):
+        with self.assertRaises(caddyfile.ConfigError):
+            caddyfile.validate_socket("/run/caddy/admin.sock\n\tauto_https off")
+
+    def test_bind_address_must_be_an_ip_literal(self):
+        for bad in ("0.0.0.0 evil", "127.0.0.1\n}", "999.1.1.1", "localhost"):
+            with self.subTest(bind=bad):
+                with self.assertRaises(caddyfile.ConfigError):
+                    caddyfile.validate_bind(bad)
+        self.assertEqual(caddyfile.validate_bind("127.0.0.1"), "127.0.0.1")
+        self.assertEqual(caddyfile.validate_bind(""), "",
+                         "an empty bind is meaningful: listen on all interfaces")
+
+    def test_ports_must_be_in_range(self):
+        for bad in (0, 65536, "http", None):
+            with self.subTest(port=bad):
+                with self.assertRaises(caddyfile.ConfigError):
+                    caddyfile.validate_port(bad, "https port")
+
+    def test_backend_and_public_port_must_differ(self):
+        _, site, _ = render(theme="cdn")
+        with self.assertRaises(caddyfile.ConfigError):
+            caddyfile.build(domain=DOMAIN, webroot="/var/www/html",
+                            endpoints=site.endpoints, https_port=80,
+                            http_port=80)
+
+
+class TestPublicHttpSurface(unittest.TestCase):
+    """:80 is the only Caddy listener reachable from the internet.
+
+    It used to answer ``Server: Caddy`` on every request while the backend
+    behind it went to some trouble to strip exactly that header.
+    """
+
+    def _http_block(self, **kwargs):
+        _, site, _ = render(theme="cdn")
+        text = caddyfile.build(domain=DOMAIN, webroot="/var/www/html",
+                               endpoints=site.endpoints, **kwargs)
+        start = text.index(f"{DOMAIN}:80 {{")
+        return text[start:text.index("\n}\n", start)]
+
+    def test_redirect_block_strips_the_server_header(self):
+        block = self._http_block()
+        self.assertIn("-Server", block)
+        self.assertIn("-Alt-Svc", block)
+
+    def test_redirect_never_leaks_the_backend_port(self):
+        block = self._http_block(https_port=8443)
+        self.assertIn(f"redir https://{DOMAIN}", block)
+        self.assertNotIn(":8443", block.split("redir", 1)[1])
+
+    def test_automatic_redirects_are_disabled(self):
+        """Caddy prepends its own 308 redirect ahead of the :80 block.
+
+        It carries ``Server: Caddy`` and, because https_port is not 443, writes
+        the backend port into Location -- undoing both guarantees this block
+        exists to provide.
+        """
+        _, site, _ = render(theme="cdn")
+        text = caddyfile.build(domain=DOMAIN, webroot="/var/www/html",
+                               endpoints=site.endpoints)
+        self.assertIn("auto_https disable_redirects", text)
+
+    def test_probes_assert_the_redirect_contract(self):
+        probes = validate.public_http_probes(DOMAIN, 8443)
+        self.assertTrue(probes)
+        for probe in probes:
+            self.assertEqual(probe.status, 301)
+            self.assertEqual(probe.location_prefix, f"https://{DOMAIN}")
+
+
+class TestSecretHandling(unittest.TestCase):
+    def test_profile_on_disk_carries_no_seed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "site"
+            generate(domain=DOMAIN, theme="cdn", webroot=str(root),
+                     caddyfile_path=str(Path(tmp) / "Caddyfile"),
+                     seed="a-secret-node-seed")
+            data = json.loads((root / ".selfsteal-profile.json").read_text())
+            self.assertNotIn("seed", data)
+            self.assertIn("seed_id", data)
+            self.assertNotIn("a-secret-node-seed",
+                             (root / ".selfsteal-profile.json").read_text())
+
+    def test_seed_id_is_stable_and_not_the_seed(self):
+        _, first = prepare(DOMAIN, "cdn", seed="s")
+        _, again = prepare(DOMAIN, "cdn", seed="s")
+        _, other = prepare(DOMAIN, "cdn", seed="t")
+        self.assertEqual(first.seed_id, again.seed_id)
+        self.assertNotEqual(first.seed_id, other.seed_id)
+        self.assertNotIn(first.seed_id, "s")
+
+
+class TestCleanupScope(unittest.TestCase):
+    def test_only_directories_we_emptied_are_pruned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "site"
+            config = Path(tmp) / "Caddyfile"
+            generate(domain=DOMAIN, theme="cdn", webroot=str(root),
+                     caddyfile_path=str(config))
+            operator = root / "operator-empty"
+            operator.mkdir()
+            generate(domain=DOMAIN, theme="coffee", webroot=str(root),
+                     caddyfile_path=str(config))
+            self.assertTrue(operator.is_dir(),
+                            "an empty directory the operator created is not ours "
+                            "to delete")
+
+    def test_interrupted_writes_leave_nothing_servable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "site"
+            config = Path(tmp) / "Caddyfile"
+            generate(domain=DOMAIN, theme="cdn", webroot=str(root),
+                     caddyfile_path=str(config))
+            stale = root / ".index.html.selfsteal-tmp"
+            stale.write_text("half-written page")
+            generate(domain=DOMAIN, theme="cdn", webroot=str(root),
+                     caddyfile_path=str(config))
+            self.assertFalse(stale.exists(), "stale temp file survived a re-run")
+            leftovers = [p.name for p in root.rglob("*.selfsteal-tmp")]
+            self.assertEqual(leftovers, [])
+            for path in root.rglob("*"):
+                if path.is_file():
+                    self.assertFalse(
+                        path.name.endswith(".tmp") and not path.name.startswith("."),
+                        f"{path.name} would be served by the file_server")
 
 
 if __name__ == "__main__":
