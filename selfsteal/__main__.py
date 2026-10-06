@@ -94,7 +94,7 @@ def cmd_themes(args: argparse.Namespace) -> int:
     for key, spec in sorted(REGISTRY.items(), key=lambda kv: (kv[1].kind, kv[0])):
         print(f"{key:<{width}}  {spec.kind:<9}  {spec.description}")
     print()
-    print("meta: random, technical, classic")
+    print("meta: random, technical")
     return 0
 
 

@@ -60,7 +60,7 @@ class Profile:
     domain: str
     theme: str
     theme_label: str
-    kind: str            # "technical" | "classic"
+    kind: str            # always "technical"; kept in the profile format
     variant: str
     variant_label: str
 
@@ -70,7 +70,6 @@ class Profile:
 
     api_version: str
     region: Region
-    city: str
     year: int
     release: str
     build_id: str
@@ -126,7 +125,6 @@ class Profile:
             "tagline": self.tagline,
             "api_version": self.api_version,
             "region": asdict(self.region),
-            "city": self.city,
             "year": self.year,
             "release": self.release,
             "build_id": self.build_id,
@@ -187,7 +185,10 @@ def resolve(
     ident = rng.derive("identity")
     city, zone, pop, country = ident.choice(data.REGIONS)
     region = Region(city=city, zone=zone, pop=pop, country=country)
-    classic_city = ident.choice(data.CLASSIC_CITIES)
+    # The removed ordinary-website themes drew a city here. The draw stays so
+    # that ``year`` and ``api_version`` below, and with them every page of an
+    # existing node, come out exactly as they did before.
+    ident.below(20)
     year = ident.between(2011, 2021)
     api_version = ident.weighted([("v1", 70), ("v2", 25), ("v3", 5)])
     release, build_id, uptime = _pick_release(rng, min(year + 12, 2025))
@@ -221,7 +222,6 @@ def resolve(
         tagline=tagline,
         api_version=api_version,
         region=region,
-        city=classic_city,
         year=year,
         release=release,
         build_id=build_id,

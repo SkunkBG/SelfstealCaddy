@@ -22,12 +22,7 @@ from selfsteal.rng import SeededRandom, seed_from  # noqa: E402
 
 DOMAIN = "example.com"
 ALL_THEMES = sorted(REGISTRY)
-CLASSIC_URLS = {
-    "studio": {"/", "/studio.html", "/work.html", "/contact.html"},
-    "coffee": {"/", "/menu.html", "/about.html", "/visit.html"},
-    "law": {"/", "/practice.html", "/people.html", "/contact.html"},
-    "contractor": {"/", "/services.html", "/projects.html", "/contact.html"},
-}
+REMOVED_THEMES = ("studio", "coffee", "law", "contractor", "classic")
 
 
 def render(domain=DOMAIN, theme="media-api", seed=None):
@@ -114,14 +109,14 @@ class TestAllThemes(unittest.TestCase):
                 for probe in ("/health", "/healthz", "/ready", "/readyz"):
                     self.assertIn(probe, paths)
 
-    def test_classic_themes_expose_no_api(self):
-        """A coffee shop answering /healthz is a stronger tell than no decoy."""
+    def test_every_theme_is_an_api_service(self):
         for theme, spec in REGISTRY.items():
-            if spec.kind != "classic":
-                continue
             with self.subTest(theme=theme):
+                self.assertEqual(spec.kind, "technical")
                 _, site, _ = render(theme=theme)
-                self.assertEqual(site.endpoints, [])
+                self.assertTrue(
+                    any(e.path.startswith("/api/") for e in site.endpoints),
+                    "every remaining theme must serve a JSON API")
 
     def test_endpoints_and_docs_agree(self):
         for theme, spec in REGISTRY.items():
@@ -150,21 +145,30 @@ class TestAllThemes(unittest.TestCase):
                             f"{endpoint.path} disagrees with {profile.api_version}")
 
 
-class TestBackwardCompatibility(unittest.TestCase):
-    def test_classic_theme_urls_are_unchanged(self):
-        for theme, expected in CLASSIC_URLS.items():
-            with self.subTest(theme=theme):
-                _, site, files = render(theme=theme)
-                self.assertEqual({p.url for p in site.pages}, expected)
-                for url in expected:
-                    name = "index.html" if url == "/" else url.lstrip("/")
-                    self.assertIn(name, files)
+class TestRemovedThemes(unittest.TestCase):
+    """The ordinary-website themes are gone; only API services remain."""
 
-    def test_legacy_theme_keys_still_resolve(self):
-        for theme in ("studio", "coffee", "law", "contractor", "random"):
+    def test_removed_themes_are_refused_by_name(self):
+        for theme in REMOVED_THEMES:
+            with self.subTest(theme=theme):
+                with self.assertRaises(ValueError) as caught:
+                    prepare(DOMAIN, theme)
+                self.assertIn("removed", str(caught.exception))
+
+    def test_meta_themes_still_resolve(self):
+        for theme in ("random", "technical"):
             with self.subTest(theme=theme):
                 spec, _ = prepare(DOMAIN, theme)
                 self.assertIn(spec.key, REGISTRY)
+
+    def test_no_page_uses_a_html_url(self):
+        """``.html`` URLs belonged to the removed themes; try_files no longer
+        resolves them, so a page that relied on one would 404."""
+        for theme in ALL_THEMES:
+            with self.subTest(theme=theme):
+                _, site, _ = render(theme=theme)
+                for page in site.pages:
+                    self.assertFalse(page.url.endswith(".html"), page.url)
 
 
 class TestSecurity(unittest.TestCase):
@@ -313,12 +317,14 @@ class TestDiversity(unittest.TestCase):
             self.assertGreaterEqual(len(values), 29,
                                     f"{key} is shared across installs")
 
-    def test_random_mixes_classic_and_technical(self):
-        kinds = set()
-        for i in range(40):
+    def test_random_spreads_across_api_themes(self):
+        picked = set()
+        for i in range(60):
             spec, _ = prepare(f"n{i}.example.com", "random")
-            kinds.add(spec.kind)
-        self.assertEqual(kinds, {"classic", "technical"})
+            self.assertEqual(spec.kind, "technical")
+            picked.add(spec.key)
+        self.assertGreaterEqual(len(picked), 6,
+                                "random keeps landing on the same few themes")
 
 
 class TestFilesystem(unittest.TestCase):
@@ -326,15 +332,18 @@ class TestFilesystem(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "site"
             config = Path(tmp) / "Caddyfile"
-            generate(domain="a.example.com", theme="coffee", webroot=str(root),
-                     caddyfile_path=str(config))
-            self.assertTrue((root / "menu.html").exists())
-            generate(domain="a.example.com", theme="studio", webroot=str(root),
-                     caddyfile_path=str(config))
-            self.assertFalse((root / "menu.html").exists(),
-                             "a stale page from the previous theme would keep "
-                             "serving 200 with another brand's content")
-            self.assertTrue((root / "work.html").exists())
+            first = generate(domain="a.example.com", theme="storage",
+                             webroot=str(root), caddyfile_path=str(config))
+            second = generate(domain="a.example.com", theme="cdn",
+                              webroot=str(root), caddyfile_path=str(config))
+            stale = set(first.files_written) - set(second.files_written)
+            self.assertTrue(stale, "the two themes must differ in some file")
+            self.assertEqual(sorted(stale), second.files_removed)
+            for name in stale:
+                self.assertFalse((root / name).exists(),
+                                 f"{name}: a stale page from the previous theme "
+                                 "would keep serving 200 with another brand's "
+                                 "content")
 
     def test_upgrade_from_1x_removes_its_pages(self):
         """1.x kept no manifest, so its pages would otherwise survive forever."""
@@ -411,7 +420,7 @@ class TestDryRun(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "site"
             config = Path(tmp) / "Caddyfile"
-            generate(domain=DOMAIN, theme="coffee", webroot=str(root),
+            generate(domain=DOMAIN, theme="storage", webroot=str(root),
                      caddyfile_path=str(config))
             before = {p.relative_to(root).as_posix(): p.read_bytes()
                       for p in root.rglob("*") if p.is_file()}
@@ -427,16 +436,19 @@ class TestDryRun(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "site"
             config = Path(tmp) / "Caddyfile"
-            generate(domain=DOMAIN, theme="coffee", webroot=str(root),
-                     caddyfile_path=str(config))
-            plan = generate(domain=DOMAIN, theme="studio", webroot=str(root),
+            first = generate(domain=DOMAIN, theme="storage", webroot=str(root),
+                             caddyfile_path=str(config))
+            plan = generate(domain=DOMAIN, theme="cdn", webroot=str(root),
                             caddyfile_path=str(config), dry_run=True)
             self.assertTrue(plan.dry_run)
             self.assertIn("index.html", plan.files_written)
-            self.assertIn("menu.html", plan.files_removed,
-                          "the plan must name the stale pages it would delete")
-            self.assertTrue((root / "menu.html").exists(),
-                            "planning to remove a file is not removing it")
+            stale = sorted(set(first.files_written) - set(plan.files_written))
+            self.assertTrue(stale)
+            self.assertEqual(stale, plan.files_removed,
+                             "the plan must name the stale pages it would delete")
+            for name in stale:
+                self.assertTrue((root / name).exists(),
+                                "planning to remove a file is not removing it")
 
 
 class TestWebrootGuard(unittest.TestCase):
@@ -534,7 +546,36 @@ class TestPublicHttpSurface(unittest.TestCase):
         self.assertTrue(probes)
         for probe in probes:
             self.assertEqual(probe.status, 301)
-            self.assertEqual(probe.location_prefix, f"https://{DOMAIN}")
+            if probe.host is None:
+                self.assertEqual(probe.location_prefix, f"https://{DOMAIN}")
+
+    def test_unknown_host_gets_a_hardened_catch_all(self):
+        """A scanner sends the bare IP as Host. With no site to match, Caddy
+        answered that itself: an empty 200 carrying ``Server: Caddy``."""
+        _, site, _ = render(theme="cdn")
+        text = caddyfile.build(domain=DOMAIN, webroot="/var/www/html",
+                               endpoints=site.endpoints)
+        start = text.index("\n:80 {") + 1
+        block = text[start:text.index("\n}\n", start)]
+        self.assertIn("-Server", block)
+        self.assertIn("redir https://{host}{uri} permanent", block)
+        self.assertNotIn(DOMAIN, block,
+                         "the catch-all must not tell a stranger the domain")
+
+    def test_a_probe_covers_the_unknown_host(self):
+        strangers = [p for p in validate.public_http_probes(DOMAIN, 8443)
+                     if p.host]
+        self.assertTrue(strangers)
+        for probe in strangers:
+            self.assertNotIn(DOMAIN, probe.location_prefix)
+
+    def test_html_route_does_not_guess_a_html_suffix(self):
+        """``{path}.html`` made /404 and /index answer 200 with real pages."""
+        _, site, _ = render(theme="cdn")
+        text = caddyfile.build(domain=DOMAIN, webroot="/var/www/html",
+                               endpoints=site.endpoints)
+        self.assertIn("try_files {path} {path}/index.html\n", text)
+        self.assertNotIn("{path}.html", text)
 
 
 class TestSecretHandling(unittest.TestCase):
@@ -568,7 +609,7 @@ class TestCleanupScope(unittest.TestCase):
                      caddyfile_path=str(config))
             operator = root / "operator-empty"
             operator.mkdir()
-            generate(domain=DOMAIN, theme="coffee", webroot=str(root),
+            generate(domain=DOMAIN, theme="storage", webroot=str(root),
                      caddyfile_path=str(config))
             self.assertTrue(operator.is_dir(),
                             "an empty directory the operator created is not ours "

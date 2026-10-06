@@ -64,12 +64,6 @@ REGIONS = [
     ("New York", "na-east", "nyc1", "US"),
 ]
 
-CLASSIC_CITIES = [
-    "Portland", "Austin", "Bristol", "Leeds", "Hamburg", "Aarhus", "Lyon",
-    "Ghent", "Tallinn", "Porto", "Antwerp", "Utrecht", "Malmo", "Nantes",
-    "Cork", "Bergen", "Turin", "Graz", "Leiden", "Kaunas",
-]
-
 # --- typography -------------------------------------------------------------
 # Local stacks only.  A generated site must never reach a font CDN: one
 # outbound request to a third party defeats the entire premise.

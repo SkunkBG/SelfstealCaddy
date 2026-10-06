@@ -6,8 +6,8 @@ name starts with a dot because the Caddyfile 404s dotfiles: if the process is
 killed mid-write, the leftover is invisible to the internet rather than being
 served as a stray copy of the page.  Files no longer produced are removed --
 the original installer wrote in place and never cleaned up, so switching a node
-from ``coffee`` to ``studio`` left ``menu.html`` serving 200 with the previous
-brand's content while the sitemap claimed it did not exist.  An internally
+to another theme left the previous theme's pages serving 200 with the previous
+brand's content while the sitemap claimed they did not exist.  An internally
 inconsistent site is a worse decoy than a plain one.
 
 ``dry_run`` resolves the whole installation and returns the plan without
@@ -34,9 +34,10 @@ MANIFEST_NAME = ".selfsteal-manifest.json"
 PROFILE_NAME = ".selfsteal-profile.json"
 TMP_SUFFIX = ".selfsteal-tmp"
 
-# Pages emitted by 1.x, which kept no manifest. On upgrade there is nothing to
-# diff against, so a stale page from the previous theme would keep answering
-# 200 with another brand's content while being absent from the new sitemap.
+# Pages emitted by 1.x, which kept no manifest and built ordinary websites
+# (themes that no longer exist). On upgrade there is nothing to diff against,
+# so a stale page would keep answering 200 with another brand's content while
+# being absent from the new sitemap.
 LEGACY_PAGES = [
     "studio.html", "work.html", "contact.html",
     "menu.html", "about.html", "visit.html",

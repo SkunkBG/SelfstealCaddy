@@ -208,6 +208,21 @@ def build(
     add(f"\tredir https://{domain}{{uri}} permanent")
     add("}")
     add("")
+    # Without this block a request whose Host is not the domain -- which is
+    # what every address-space scanner sends -- matches no site, and Caddy
+    # answers it itself: an empty 200 carrying `Server: Caddy`.
+    add("# Any other Host on the public port (scanners send the bare IP). Same")
+    add("# header stripping; the redirect echoes the Host it was given, so the")
+    add("# domain is not disclosed to someone who only knows the address.")
+    add(f":{http_port} {{")
+    add("\theader {")
+    if strip_server:
+        add("\t\t-Server")
+    add("\t\t-Alt-Svc")
+    add("\t}")
+    add("\tredir https://{host}{uri} permanent")
+    add("}")
+    add("")
 
     # ---- :8443 — the site itself ----
     add("# Local HTTPS backend. Xray Reality proxies probe traffic here.")
@@ -320,7 +335,7 @@ def build(
     # ---- HTML ----
     add("\thandle {")
     add('\t\theader Cache-Control "public, max-age=300"')
-    add("\t\ttry_files {path} {path}/index.html {path}.html")
+    add("\t\ttry_files {path} {path}/index.html")
     add("\t\tfile_server")
     add("\t}")
     add("")
