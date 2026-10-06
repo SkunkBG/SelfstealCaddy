@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  SelfstealCaddy — technical web service generator for Reality self-steal
+#  SelfstealCaddy — API service generator for Reality self-steal
 #
-#  Interface (unchanged from 1.x):
+#  Every generated site is a technical service with a JSON API (media, data,
+#  storage, CDN ...). The ordinary-website themes of earlier versions are gone.
+#
+#  Interface:
 #     bash selfsteal-setup.sh                                  # interactive
 #     DOMAIN=ex.com STUB_THEME=random bash selfsteal-setup.sh  # non-interactive
 #     DRY_RUN=1 DOMAIN=ex.com STUB_THEME=cdn WEBROOT=/tmp/site \
@@ -87,7 +90,7 @@ banner() {
     printf '%s' "$CYAN"
     cat <<'BANNER'
  ╔═══════════════════════════════════════════════════╗
- ║   SelfstealCaddy · technical service generator    ║
+ ║   SelfstealCaddy · API service generator          ║
  ║   deterministic · unique per node · DPI-hardened  ║
  ╚═══════════════════════════════════════════════════╝
 BANNER
@@ -424,21 +427,15 @@ PY
 # ---------------------------------------------------------------------------
 choose_theme_interactive() {
     echo
-    printf '%s  Выберите тип сайта-заглушки:%s\n\n' "$BOLD" "$NC"
-    printf '  %s1)%s %sСлучайно%s      %s— смесь технических и обычных (рекомендуется)%s\n' \
+    printf '%s  Выберите API-сервис для заглушки:%s\n\n' "$BOLD" "$NC"
+    printf '  %s1)%s %sСлучайно%s      %s— случайный API / CDN / storage сервис (рекомендуется)%s\n' \
         "$CYAN" "$NC" "$BOLD" "$NC" "$DIM" "$NC"
-    printf '  %s2)%s %sТехнический%s   %s— случайный API / CDN / storage сервис%s\n' \
-        "$CYAN" "$NC" "$BOLD" "$NC" "$DIM" "$NC"
-    printf '  %s3)%s %sОбычный сайт%s  %s— студия / кофейня / юрфирма / подрядчик%s\n' \
-        "$CYAN" "$NC" "$BOLD" "$NC" "$DIM" "$NC"
-    printf '  %s4)%s %sВыбрать тему%s  %s— полный список%s\n\n' \
+    printf '  %s2)%s %sВыбрать тему%s  %s— полный список%s\n\n' \
         "$CYAN" "$NC" "$BOLD" "$NC" "$DIM" "$NC"
     local choice
-    read -rp "${YELLOW}[?] Выбор (1-4) [1]: ${NC}" choice
+    read -rp "${YELLOW}[?] Выбор (1-2) [1]: ${NC}" choice
     case "${choice:-1}" in
-        2) STUB_THEME=technical ;;
-        3) STUB_THEME=classic ;;
-        4)
+        2)
             echo
             run_gen themes | sed 's/^/  /'
             echo

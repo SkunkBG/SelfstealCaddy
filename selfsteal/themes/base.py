@@ -1,4 +1,4 @@
-"""Theme abstractions shared by classic and technical themes."""
+"""Theme abstractions: endpoints, pages, sites and the registry entry."""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ class ThemeSpec:
 
     key: str
     label: str
-    kind: str                      # "technical" | "classic"
+    kind: str                      # always "technical"
     description: str
     build: Callable[[Profile], Site]
     variants: List[str] = field(default_factory=list)

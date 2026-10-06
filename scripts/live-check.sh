@@ -43,6 +43,9 @@ text = open(src, encoding="utf-8").read()
 # production.
 text = text.replace("\thttp_port 80\n", f"\thttp_port {http_port}\n")
 text = text.replace(f"{domain}:80 {{", f"{domain}:{http_port} {{")
+# The catch-all for unknown Hosts moves with it, so the probe that sends a
+# stranger's Host header has the real block to hit.
+text = text.replace("\n:80 {\n", f"\n:{http_port} {{\n")
 text = text.replace(f"{domain}:8443 {{", f"{domain}:{port} {{")
 text = re.sub(r"\ttls \{\n\t\tissuer acme \{\n.*?\n\t\t\}\n\t\}\n",
               "\ttls internal\n", text, flags=re.S)

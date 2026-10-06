@@ -157,8 +157,7 @@ def _resolves(webroot: Path, url: str) -> bool:
     if rel == "":
         return (webroot / "index.html").exists()
     candidates = [webroot / rel,
-                  webroot / rel / "index.html",
-                  webroot / (rel + ".html")]
+                  webroot / rel / "index.html"]
     return any(c.is_file() for c in candidates)
 
 
@@ -175,6 +174,7 @@ class Probe:
     json_body: bool = False
     location_prefix: Optional[str] = None
     location_excludes: Optional[str] = None
+    host: Optional[str] = None              # Host header, if not the site's own
 
 
 class _PinnedConnection(http.client.HTTPSConnection):
@@ -218,7 +218,7 @@ def _request(base: str, probe: "Probe", timeout: float = 8.0,
     conn = _connection(base, connect_addr, timeout)
     try:
         conn.request(probe.method, probe.path, headers={
-            "Host": urlsplit(base).hostname or "localhost",
+            "Host": probe.host or urlsplit(base).hostname or "localhost",
             "User-Agent": "Mozilla/5.0 (compatible; site-check/1.0)",
             "Accept": "*/*",
             "Connection": "close",
@@ -293,12 +293,18 @@ def public_http_probes(domain: str, https_port: int = 8443) -> List[Probe]:
     the backend port.
     """
     redirect_to = f"https://{domain}"
+    # A scanner walking address space sends the IP, not the domain, as Host.
+    # That request must get the same treatment -- no Server header -- and must
+    # not be told which domain lives here.
+    stranger = "198.51.100.7"
     return [
         Probe("/", 301, location_prefix=redirect_to,
               location_excludes=f":{https_port}"),
         Probe("/does-not-exist-8f2c", 301, location_prefix=redirect_to,
               location_excludes=f":{https_port}"),
         Probe("/.env", 301, location_prefix=redirect_to),
+        Probe("/", 301, host=stranger, location_prefix=f"https://{stranger}/",
+              location_excludes=f":{https_port}"),
     ]
 
 
